@@ -10,13 +10,14 @@ Use `Jump to` to open the bounded section in `SUBSYSTEM-MAP.md`, then follow the
 ## Hotspots
 | Type | Name | Aliases | Jump to | Canonical owner path |
 | --- | --- | --- | --- | --- |
-| Hotspot | Keymaps | checkpoint keyspace mapping; WAN LoRA logical keys | [Keymaps](SUBSYSTEM-MAP.md#map-hotspot-keymaps) | `apps/backend/runtime/state_dict/key_mapping.py` |
+| Hotspot | Keymaps | checkpoint keyspace mapping; WAN LoRA logical keys; Anima raw `net.*` core keyspace | [Keymaps](SUBSYSTEM-MAP.md#map-hotspot-keymaps) | `apps/backend/runtime/state_dict/key_mapping.py` |
 | Hotspot | Native Conv3D VAE | codex3d vae; conv3d native | [Native Conv3D VAE](SUBSYSTEM-MAP.md#map-hotspot-vae-codex3d) | `apps/backend/runtime/common/vae_codex3d.py` |
 | Hotspot | Hires Fix | hires second pass; high-res fix | [Hires Fix](SUBSYSTEM-MAP.md#map-hotspot-hires-fix) | `apps/backend/runtime/pipeline_stages/hires_fix.py` |
 | Hotspot | Image Automation | infinite generate; folder loop; wildcard batch | [Image Automation](SUBSYSTEM-MAP.md#map-hotspot-image-automation) | `apps/backend/use_cases/image_automation.py` |
 | Hotspot | IP-Adapter | image prompt adapter; reference image conditioning | [IP-Adapter](SUBSYSTEM-MAP.md#map-hotspot-ip-adapter) | `apps/backend/runtime/pipeline_stages/ip_adapter.py` |
+| Hotspot | SUPIR Runtime | supir mode; sdxl restore; img2img restore branch | [SUPIR Runtime](SUBSYSTEM-MAP.md#map-hotspot-supir-runtime) | `apps/backend/runtime/families/supir/runtime.py` |
 | Hotspot | attention_sram_v1 | SRAM attention; split-KV; shared-memory attention | [attention_sram_v1](SUBSYSTEM-MAP.md#map-hotspot-attention-sram-v1) | `apps/backend/runtime/attention/sram/__init__.py` |
-| Hotspot | Generation Router | generation endpoints; request parsing | [Generation Router](SUBSYSTEM-MAP.md#map-hotspot-generation-router) | `apps/backend/interfaces/api/routers/generation.py` |
+| Hotspot | Generation Router | generation endpoints; request parsing; SUPIR preflight | [Generation Router](SUBSYSTEM-MAP.md#map-hotspot-generation-router) | `apps/backend/interfaces/api/routers/generation.py` |
 | Hotspot | Task Streaming | task SSE; replay buffer; `/api/tasks/{id}/events` | [Task Streaming](SUBSYSTEM-MAP.md#map-hotspot-task-streaming) | `apps/backend/interfaces/api/routers/tasks.py` |
 | Hotspot | Orchestrator | engine dispatch; model load/cache; runtime coordinator | [Orchestrator](SUBSYSTEM-MAP.md#map-hotspot-orchestrator) | `apps/backend/core/orchestrator.py` |
 
@@ -24,7 +25,7 @@ Use `Jump to` to open the bounded section in `SUBSYSTEM-MAP.md`, then follow the
 | Type | Name | Aliases | Jump to | Canonical owner path |
 | --- | --- | --- | --- | --- |
 | Pipeline | txt2img | text-to-image; image gen | [txt2img](SUBSYSTEM-MAP.md#map-pipeline-txt2img) | `apps/backend/use_cases/txt2img.py` |
-| Pipeline | img2img | image-to-image; inpaint; hires continuation; mask-capability gate | [img2img](SUBSYSTEM-MAP.md#map-pipeline-img2img) | `apps/backend/use_cases/img2img.py` |
+| Pipeline | img2img | image-to-image; inpaint; hires continuation; SUPIR mode; mask-capability gate | [img2img](SUBSYSTEM-MAP.md#map-pipeline-img2img) | `apps/backend/use_cases/img2img.py` |
 | Pipeline | image_automation | infinite generate; repeat loop; batch method | [image_automation](SUBSYSTEM-MAP.md#map-pipeline-image-automation) | `apps/backend/use_cases/image_automation.py` |
 | Pipeline | txt2vid | text-to-video | [txt2vid](SUBSYSTEM-MAP.md#map-pipeline-txt2vid) | `apps/backend/use_cases/txt2vid.py` |
 | Pipeline | img2vid | image-to-video | [img2vid](SUBSYSTEM-MAP.md#map-pipeline-img2vid) | `apps/backend/use_cases/img2vid.py` |

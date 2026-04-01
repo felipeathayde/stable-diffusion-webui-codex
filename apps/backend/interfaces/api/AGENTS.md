@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-03-26
+Last Review: 2026-03-31
 Status: Active
 
 ## Purpose
@@ -78,7 +78,7 @@ Status: Active
 - 2026-03-16: `dependency_checks.py` now exposes an explicit LTX2 `vendored_metadata` readiness row backed by the same fail-loud vendored-runtime validator used by loader assembly: the local `Lightricks/LTX-2` repo must provide `model_index.json`, tokenizer assets, and readable config dirs for `text_encoder`, `scheduler`, `connectors`, `transformer`, `vae`, `audio_vae`, and `vocoder` before the frontend unblocks LTX generation.
 - 2026-03-26: LTX `two_stage` vendor gating is profile-scoped, not global: the common `vendored_metadata` row stays on shared runtime metadata, while `latent_upsampler/config.json` is enforced only when `/api/models` admissibility or the router-owned `ltx_execution_profile='two_stage'` lane actually asks for that profile.
 - 2026-02-23: `device_selection.configured_main_device()` now resolves main-device from live memory-manager authority first (`manager.primary_device()`), then args/env fallback; this removes stale bootstrap-only device reads after hot device updates.
-- 2026-02-23: `routers/supir.py` now resolves canonical request device before SUPIR payload parsing and passes the resolved value into `parse_supir_enhance_config(..., device=...)`, removing duplicate device-authority parsing inside SUPIR config.
+- 2026-03-31: SUPIR no longer has a standalone generation route/task under `/api/supir/enhance`; `routers/supir.py` is diagnostics-only and the live SUPIR-mode request contract is owned by `routers/generation.py` on canonical SDXL img2img/inpaint surfaces.
 - 2026-02-23: `run_api.py` now logs effective allocator bootstrap state at startup (`PYTORCH_CUDA_ALLOC_CONF`, resolved `backend`, and `--cuda-malloc` flag).
 - 2026-02-24: `run_api.py` now applies a Windows-only process startup patch via `SetProcessInformation(ProcessPowerThrottling)` to disable execution-speed throttling (EcoQoS background throttle path), with explicit startup logs for success/failure.
 - 2026-02-24: Windows power-throttling startup patch now logs decoded Win32 error text (`ctypes.WinError`) on failure and warns explicitly when `SetProcessInformation` is unavailable in the runtime.

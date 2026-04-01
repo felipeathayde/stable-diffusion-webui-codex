@@ -16,6 +16,7 @@ The sampler execution logic is implemented in the SUPIR runtime (not here). This
 Symbols (top-level; keep in sync; no ghosts):
 - `list_supir_samplers` (function): Return all SUPIR sampler specs.
 - `resolve_supir_sampler` (function): Resolve a user-facing label or ID into a `SupirSamplerSpec` (fail loud).
+- `iter_supir_sampler_labels` (function): Yield public sampler labels, optionally excluding dev entries.
 """
 
 from __future__ import annotations
@@ -71,13 +72,15 @@ def list_supir_samplers() -> list[SupirSamplerSpec]:
     return list(_REGISTRY)
 
 
-def resolve_supir_sampler(value: str) -> SupirSamplerSpec:
+def resolve_supir_sampler(value: str, *, include_dev: bool = True) -> SupirSamplerSpec:
     raw = str(value or "").strip()
     if not raw:
         raise SupirConfigError("supir_sampler must be set")
 
     # Try label match first (UI uses labels).
     for spec in _REGISTRY:
+        if not include_dev and spec.stability != "stable":
+            continue
         if spec.label == raw:
             return spec
 
@@ -88,6 +91,8 @@ def resolve_supir_sampler(value: str) -> SupirSamplerSpec:
         raise SupirConfigError(f"Unknown SUPIR sampler: {raw!r}") from None
 
     for spec in _REGISTRY:
+        if not include_dev and spec.stability != "stable":
+            continue
         if spec.sampler_id is sid:
             return spec
     raise SupirConfigError(f"SUPIR sampler id not registered: {sid.value!r}")
@@ -105,4 +110,3 @@ __all__ = [
     "list_supir_samplers",
     "resolve_supir_sampler",
 ]
-

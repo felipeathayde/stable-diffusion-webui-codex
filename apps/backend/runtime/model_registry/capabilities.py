@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Semantic engine capability surfaces exposed to the UI layer.
 Defines `SemanticEngine` tags and an `EngineParamSurface` describing which high-level UI sections and tasks are expected to be used for each engine,
-including explicit masked-img2img/inpaint support, with executable defaults and recommendation hints for the live surface (for example SD15
+including explicit masked-img2img/inpaint support plus native IP-Adapter/SUPIR discoverability, with executable defaults and recommendation hints for the live surface (for example SD15
 `ddim`/`ddim`, WAN22 `uni-pc bh2`/`simple`, and LTX2 `euler`/`simple` with no sampler fiction beyond the live runtime lane).
 Includes Anima (`SemanticEngine.ANIMA`) as a flow-based image engine (txt2img/img2img) requiring sha-selected external assets and exposing
 `er sde` in the recommended sampler surface. FLUX.2 exposes the truthful Klein 4B/base-4B slice here: txt2img plus dedicated
@@ -18,11 +18,12 @@ WAN semantic capabilities are bound to explicit WAN22 variant families via prima
 Symbols (top-level; keep in sync; no ghosts):
 - `SemanticEngine` (enum): UI-facing semantic engine tags used by API/frontend gating.
 - `GuidanceAdvancedSurface` (dataclass): Optional per-engine support map for advanced CFG/APG controls (`extras.guidance` keys).
-- `EngineParamSurface` (dataclass): Declared parameter surface for an engine (workflow flags including masked img2img/inpaint + IP-Adapter support + optional sampler/scheduler recommendations).
+- `EngineParamSurface` (dataclass): Declared parameter surface for an engine (workflow flags including masked img2img/inpaint + IP-Adapter/SUPIR support + optional sampler/scheduler recommendations).
 - `ENGINE_SURFACES` (constant): Mapping of semantic engine tag to `EngineParamSurface`.
 - `ENGINE_ID_TO_SEMANTIC_ENGINE` (constant): Canonical mapping from API engine ids to semantic engine tags.
 - `ip_adapter_support_error` (function): Return the fail-loud exact-engine/semantic-engine support error for IP-Adapter, or `None` when supported.
 - `supports_ip_adapter_engine_id` (function): Return whether the exact engine id is allowed to run IP-Adapter in tranche 1.
+- `supir_support_error` (function): Return the fail-loud exact-engine/semantic-engine support error for SUPIR mode, or `None` when supported.
 - `build_ltx2_capability_surface` (function): Build the truthful semantic capability surface for the live LTX2 lane.
 - `list_engine_capabilities` (function): Returns engine surfaces keyed by string tag for API responses.
 - `semantic_engine_for_engine_id` (function): Resolve a semantic engine tag from an API engine id (fail-loud on unknown ids).
@@ -101,6 +102,7 @@ class EngineParamSurface:
     supports_lora: bool
     supports_controlnet: bool
     supports_ip_adapter: bool
+    supports_supir_mode: bool = False
     # Optional: recommended sampler/scheduler lists for UI hinting.
     recommended_samplers: tuple[str, ...] | None = None
     recommended_schedulers: tuple[str, ...] | None = None
@@ -127,6 +129,7 @@ def build_ltx2_capability_surface() -> EngineParamSurface:
         supports_lora=False,
         supports_controlnet=False,
         supports_ip_adapter=False,
+        supports_supir_mode=False,
         recommended_samplers=("euler",),
         recommended_schedulers=("simple",),
         default_sampler="euler",
@@ -161,6 +164,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_lora=True,
         supports_controlnet=False,
         supports_ip_adapter=True,
+        supports_supir_mode=False,
         default_sampler="ddim",
         default_scheduler="ddim",
         guidance_advanced=_GUIDANCE_ADVANCED_CLASSIC_CFG,
@@ -177,6 +181,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_lora=True,
         supports_controlnet=False,
         supports_ip_adapter=True,
+        supports_supir_mode=True,
         default_sampler="euler",
         default_scheduler="euler_discrete",
         guidance_advanced=_GUIDANCE_ADVANCED_CLASSIC_CFG,
@@ -193,6 +198,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_lora=True,
         supports_controlnet=False,
         supports_ip_adapter=False,
+        supports_supir_mode=False,
         recommended_samplers=("euler", "euler a", "dpm++ 2m"),
         recommended_schedulers=("simple", "beta", "normal"),
         default_sampler="euler",
@@ -210,6 +216,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_lora=False,
         supports_controlnet=False,
         supports_ip_adapter=False,
+        supports_supir_mode=False,
         recommended_samplers=("euler", "dpm++ 2m"),
         recommended_schedulers=("simple",),
         default_sampler="euler",
@@ -227,6 +234,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_lora=True,
         supports_controlnet=False,
         supports_ip_adapter=False,
+        supports_supir_mode=False,
         recommended_samplers=("euler", "dpm++ 2m"),
         recommended_schedulers=("simple",),
         default_sampler="euler",
@@ -245,6 +253,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_lora=False,
         supports_controlnet=False,
         supports_ip_adapter=False,
+        supports_supir_mode=False,
         recommended_samplers=("euler", "euler a", "dpm++ 2m", "er sde"),
         recommended_schedulers=("simple", "beta", "normal", "exponential"),
         default_sampler="euler",
@@ -263,6 +272,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_lora=False,
         supports_controlnet=False,
         supports_ip_adapter=False,
+        supports_supir_mode=False,
         recommended_samplers=("euler", "dpm++ 2m"),
         recommended_schedulers=("simple", "beta", "normal"),
         default_sampler="euler",
@@ -280,6 +290,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_lora=True,  # high/low LoRA slots in WAN22 panel
         supports_controlnet=False,
         supports_ip_adapter=False,
+        supports_supir_mode=False,
         recommended_samplers=("uni-pc bh2", "uni-pc", "euler", "euler a"),
         recommended_schedulers=("simple",),
         default_sampler="uni-pc bh2",
@@ -299,6 +310,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_lora=False,
         supports_controlnet=False,
         supports_ip_adapter=False,
+        supports_supir_mode=False,
         default_sampler=None,
         default_scheduler=None,
     ),
@@ -314,6 +326,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
         supports_lora=False,
         supports_controlnet=False,
         supports_ip_adapter=False,
+        supports_supir_mode=False,
     ),
 }
 
@@ -342,6 +355,13 @@ _IP_ADAPTER_EXACT_ENGINE_REJECTS: Dict[str, str] = {
     "sd20": "Engine 'sd20' is unsupported for IP-Adapter in tranche 1.",
     "sd35": "Engine 'sd35' is unsupported for IP-Adapter in tranche 1.",
     "sdxl_refiner": "Engine 'sdxl_refiner' is unsupported for IP-Adapter in tranche 1.",
+}
+
+_SUPIR_EXACT_ENGINE_REJECTS: Dict[str, str] = {
+    "sd15": "Engine 'sd15' is unsupported for SUPIR mode in tranche 1.",
+    "sd20": "Engine 'sd20' is unsupported for SUPIR mode in tranche 1.",
+    "sd35": "Engine 'sd35' is unsupported for SUPIR mode in tranche 1.",
+    "sdxl_refiner": "Engine 'sdxl_refiner' is unsupported for SUPIR mode in tranche 1.",
 }
 
 _ENGINE_ID_PRIMARY_FAMILY: Dict[str, ModelFamily] = {
@@ -413,6 +433,26 @@ def supports_ip_adapter_engine_id(engine_id: str) -> bool:
     return ip_adapter_support_error(engine_id) is None
 
 
+def supir_support_error(engine_id: str) -> str | None:
+    normalized = str(engine_id or "").strip().lower()
+    if normalized == "":
+        return "SUPIR mode requires a non-empty engine id."
+    exact_reject = _SUPIR_EXACT_ENGINE_REJECTS.get(normalized)
+    if exact_reject is not None:
+        return exact_reject
+    if normalized == "sdxl":
+        return None
+    try:
+        semantic_engine = semantic_engine_for_engine_id(normalized)
+    except KeyError:
+        return f"Engine '{normalized}' is unsupported for SUPIR mode in tranche 1."
+    if semantic_engine is SemanticEngine.SDXL:
+        return f"Engine '{normalized}' is unsupported for SUPIR mode in tranche 1."
+    return (
+        f"Engine '{normalized}' is unsupported for SUPIR mode in tranche 1. "
+        "Supported semantic engine: sdxl (exact engine id 'sdxl' only)."
+    )
+
 def engine_supports_cfg(engine_id: str) -> bool:
     from apps.backend.runtime.model_registry.family_runtime import get_family_spec
 
@@ -453,6 +493,7 @@ __all__ = [
     "ENGINE_ID_TO_SEMANTIC_ENGINE",
     "ip_adapter_support_error",
     "supports_ip_adapter_engine_id",
+    "supir_support_error",
     "build_ltx2_capability_surface",
     "list_engine_capabilities",
     "semantic_engine_for_engine_id",

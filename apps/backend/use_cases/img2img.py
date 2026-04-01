@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Image-to-image use case orchestration and canonical streaming wrapper (init image + optional hires pass).
-Builds prompt/sampling plans from `CodexProcessingImg2Img`, prepares init-image bundles/latents, dispatches classic img2img conditioning by family, runs the sampler loop, and optionally performs a hires second pass with family-specific continuation semantics.
+Builds prompt/sampling plans from `CodexProcessingImg2Img`, prepares init-image bundles/latents, dispatches classic img2img conditioning by family, runs the sampler loop, optionally routes SDXL img2img/inpaint through native SUPIR mode, and optionally performs a hires second pass with family-specific continuation semantics.
 Masked img2img (“inpaint”) uses Forge/A1111 “Only masked” semantics and supports optional ADetailer-style multi-region passes for disconnected masks.
 The hires pass init is prepared via the global family-dispatched hires-fix stage (`apps/backend/runtime/pipeline_stages/hires_fix.py`).
 When configured, the hires second pass parses LoRA tags from the hires prompt/negative prompt pair, inherits base/request LoRAs when the hires
@@ -97,6 +97,7 @@ from apps.backend.runtime.pipeline_stages.sampling_plan import (
     resolve_sampler_scheduler_override,
 )
 from apps.backend.runtime.pipeline_stages.scripts import run_process_scripts
+from apps.backend.runtime.families.supir.runtime import run_supir_img2img
 from apps.backend.runtime.sampling.driver import CodexSampler
 from PIL import Image
 
@@ -191,6 +192,31 @@ def _pick_preferred_kontext_resolution(image: Image.Image) -> tuple[int, int]:
 
 def _conditioning_cache_hit_metadata(processing: CodexProcessingImg2Img) -> dict[str, object]:
     return {"conditioning_cache_hit": bool(getattr(processing, "_codex_conditioning_cache_hit", False))}
+
+
+def _merge_generation_metadata(
+    processing: CodexProcessingImg2Img,
+    result: GenerationResult | None = None,
+) -> dict[str, object]:
+    metadata = _conditioning_cache_hit_metadata(processing)
+    if result is None:
+        return metadata
+    if not isinstance(result.metadata, dict):
+        raise RuntimeError(
+            f"img2img pipeline received GenerationResult.metadata as {type(result.metadata).__name__}; expected dict."
+        )
+    metadata.update(result.metadata)
+    return metadata
+
+
+def _decoded_output_to_images(decoded: Any, *, task_label: str) -> list[Image.Image]:
+    if isinstance(decoded, torch.Tensor):
+        return latents_to_pil(decoded)
+    if isinstance(decoded, list) and all(isinstance(image, Image.Image) for image in decoded):
+        return decoded
+    raise RuntimeError(
+        f"{task_label} returned decoded output as {type(decoded).__name__}; expected torch.Tensor or list[PIL.Image.Image]."
+    )
 
 
 def _emit_pipeline_event(
@@ -817,6 +843,8 @@ def generate_img2img(
     classic_backend = _resolve_classic_img2img_backend(engine_id, has_mask=processing.has_mask())
     prompt_context = build_prompt_context(processing, prompts)
     apply_prompt_context(processing, prompt_context)
+    if processing.supir is not None and prompt_context.loras:
+        raise NotImplementedError("SUPIR mode cannot be combined with LoRA selections in tranche 1")
 
     seed_list, subseed_list, subseed_value = _derive_seeds(processing)
     if seeds is not None:
@@ -839,6 +867,8 @@ def generate_img2img(
 
     run_process_scripts(processing)
     hires_execution = _resolve_hires_execution(processing, emit_plan_event=True) if processing.hires.enabled else None
+    if processing.supir is not None and hires_execution is not None:
+        raise NotImplementedError("SUPIR mode is not supported with HiRes")
 
     payload = _compute_conditioning_payload(
         processing,
@@ -855,15 +885,21 @@ def generate_img2img(
         hires_enabled=bool(hires_execution is not None),
         has_mask=bool(processing.has_mask()),
     )
-
     pre_denoiser_hook = None
     post_denoiser_hook = None
     post_step_hook = None
     post_sample_hook = None
     full_res_plan = None
+    source_tensor = None
     if processing.has_mask():
         if bool(getattr(getattr(processing, "hires", None), "enabled", False)):
             raise NotImplementedError("HiRes is not supported for masked img2img yet")
+        if processing.supir is not None:
+            inpainting_fill = int(getattr(processing, "inpainting_fill", 0) or 0)
+            if inpainting_fill in {2, 3}:
+                raise NotImplementedError(
+                    "SUPIR mode does not support masked img2img fill modes 'latent noise' or 'latent nothing' in tranche 1"
+                )
 
         mask_region_split = bool(getattr(processing, "mask_region_split", False))
         if mask_region_split:
@@ -923,39 +959,63 @@ def generate_img2img(
 
                     init_latent = masked_bundle.init_latent
                     image_conditioning = masked_bundle.image_conditioning
+                    source_tensor = masked_bundle.init_tensor
                     pass_rng = ensure_sampler_and_rng(processing, plan)
                     noise = pass_rng.next().to(init_latent)
                     denoise_strength = float(getattr(processing, "denoising_strength", 0.5) or 0.5)
 
-                    samples = execute_sampling(
-                        processing,
-                        plan,
-                        payload,
-                        prompt_context,
-                        prompt_context.loras,
-                        rng=pass_rng,
-                        noise=noise,
-                        image_conditioning=image_conditioning,
-                        init_latent=init_latent,
-                        start_at_step=0,
-                        denoise_strength=denoise_strength,
-                        img2img_fix_steps=False,
-                        pre_denoiser_hook=pre_denoiser_hook,
-                        post_denoiser_hook=post_denoiser_hook,
-                        post_step_hook=post_step_hook,
-                        post_sample_hook=post_sample_hook,
-                    )
+                    runtime_result = None
+                    if processing.supir is not None:
+                        runtime_result = run_supir_img2img(
+                            processing,
+                            plan=plan,
+                            payload=payload,
+                            prompt_context=prompt_context,
+                            rng=pass_rng,
+                            noise=noise,
+                            source_tensor=source_tensor,
+                            pre_denoiser_hook=pre_denoiser_hook,
+                            post_denoiser_hook=post_denoiser_hook,
+                            post_step_hook=post_step_hook,
+                            post_sample_hook=post_sample_hook,
+                        )
+                        samples = runtime_result.samples
+                    else:
+                        samples = execute_sampling(
+                            processing,
+                            plan,
+                            payload,
+                            prompt_context,
+                            prompt_context.loras,
+                            rng=pass_rng,
+                            noise=noise,
+                            image_conditioning=image_conditioning,
+                            init_latent=init_latent,
+                            start_at_step=0,
+                            denoise_strength=denoise_strength,
+                            img2img_fix_steps=False,
+                            pre_denoiser_hook=pre_denoiser_hook,
+                            post_denoiser_hook=post_denoiser_hook,
+                            post_step_hook=post_step_hook,
+                            post_sample_hook=post_sample_hook,
+                        )
 
                     last_samples = samples
                     gc.collect()
                     memory_management.manager.soft_empty_cache(force=True)
-                    decoded = decode_latent_batch(
-                        processing.sd_model,
-                        samples,
-                        target_device=memory_management.manager.cpu_device,
-                        stage="img2img.mask_region_split.decode(pre)",
-                    )
-                    patch_images = latents_to_pil(decoded)
+                    if runtime_result is not None and runtime_result.decoded is not None:
+                        patch_images = _decoded_output_to_images(
+                            runtime_result.decoded,
+                            task_label="img2img.mask_region_split",
+                        )
+                    else:
+                        decoded = decode_latent_batch(
+                            processing.sd_model,
+                            samples,
+                            target_device=memory_management.manager.cpu_device,
+                            stage="img2img.mask_region_split.decode(pre)",
+                        )
+                        patch_images = latents_to_pil(decoded)
                     composited = apply_inpaint_full_res_composite(patch_images, plan=masked_bundle.full_res)
                     if len(composited) != 1:
                         raise RuntimeError(
@@ -965,6 +1025,7 @@ def generate_img2img(
 
                 if last_samples is None:
                     raise RuntimeError("mask_region_split produced no passes (internal bug)")
+                last_metadata = _merge_generation_metadata(processing, runtime_result)
                 _emit_pipeline_event(
                     processing,
                     "pipeline.stage.complete",
@@ -985,7 +1046,7 @@ def generate_img2img(
                 return GenerationResult(
                     samples=last_samples,
                     decoded=[current],
-                    metadata=_conditioning_cache_hit_metadata(processing),
+                    metadata=last_metadata,
                 )
 
         enforcement = getattr(processing, "mask_enforcement", None)
@@ -1004,6 +1065,7 @@ def generate_img2img(
         post_sample_hook = hooks.post_sample
         init_latent = masked_bundle.init_latent
         image_conditioning = masked_bundle.image_conditioning
+        source_tensor = masked_bundle.init_tensor
     else:
         bundle = prepare_init_bundle(processing)
         processing.init_latent = bundle.latents
@@ -1019,30 +1081,52 @@ def generate_img2img(
             )
         processing.image_conditioning = image_conditioning
         init_latent = bundle.latents
+        source_tensor = bundle.tensor
+
+    if not torch.is_tensor(source_tensor):
+        raise RuntimeError("img2img pipeline failed to resolve source_tensor for the canonical img2img owner.")
 
     noise = rng.next().to(init_latent)
     denoise_value = float(getattr(processing, "denoising_strength", 0.5) or 0.5)
     start_step = 0
     denoise_strength = denoise_value
 
-    samples = execute_sampling(
-        processing,
-        plan,
-        payload,
-        prompt_context,
-        prompt_context.loras,
-        rng=rng,
-        noise=noise,
-        image_conditioning=image_conditioning,
-        init_latent=init_latent,
-        start_at_step=start_step,
-        denoise_strength=denoise_strength,
-        img2img_fix_steps=False,
-        pre_denoiser_hook=pre_denoiser_hook,
-        post_denoiser_hook=post_denoiser_hook,
-        post_step_hook=post_step_hook,
-        post_sample_hook=post_sample_hook,
-    )
+    runtime_result = None
+    if processing.supir is not None:
+        runtime_result = run_supir_img2img(
+            processing,
+            plan=plan,
+            payload=payload,
+            prompt_context=prompt_context,
+            rng=rng,
+            noise=noise,
+            source_tensor=source_tensor,
+            pre_denoiser_hook=pre_denoiser_hook,
+            post_denoiser_hook=post_denoiser_hook,
+            post_step_hook=post_step_hook,
+            post_sample_hook=post_sample_hook,
+        )
+        samples = runtime_result.samples
+    else:
+        samples = execute_sampling(
+            processing,
+            plan,
+            payload,
+            prompt_context,
+            prompt_context.loras,
+            rng=rng,
+            noise=noise,
+            image_conditioning=image_conditioning,
+            init_latent=init_latent,
+            start_at_step=start_step,
+            denoise_strength=denoise_strength,
+            img2img_fix_steps=False,
+            pre_denoiser_hook=pre_denoiser_hook,
+            post_denoiser_hook=post_denoiser_hook,
+            post_step_hook=post_step_hook,
+            post_sample_hook=post_sample_hook,
+        )
+    result_metadata = _merge_generation_metadata(processing, runtime_result)
     _emit_pipeline_event(
         processing,
         "pipeline.stage.complete",
@@ -1055,13 +1139,16 @@ def generate_img2img(
     if full_res_plan is not None:
         gc.collect()
         memory_management.manager.soft_empty_cache(force=True)
-        decoded = decode_latent_batch(
-            processing.sd_model,
-            samples,
-            target_device=memory_management.manager.cpu_device,
-            stage="img2img.full_res.decode(pre)",
-        )
-        images = latents_to_pil(decoded)
+        if runtime_result is not None and runtime_result.decoded is not None:
+            images = _decoded_output_to_images(runtime_result.decoded, task_label="img2img.full_res")
+        else:
+            decoded = decode_latent_batch(
+                processing.sd_model,
+                samples,
+                target_device=memory_management.manager.cpu_device,
+                stage="img2img.full_res.decode(pre)",
+            )
+            images = latents_to_pil(decoded)
         composited = apply_inpaint_full_res_composite(images, plan=full_res_plan)
         _emit_pipeline_event(
             processing,
@@ -1074,7 +1161,8 @@ def generate_img2img(
         return GenerationResult(
             samples=samples,
             decoded=composited,
-            metadata=_conditioning_cache_hit_metadata(processing),
+            metadata=result_metadata,
+            decode_engine=getattr(runtime_result, "decode_engine", None) if runtime_result is not None else None,
         )
 
     if hires_execution is None:
@@ -1085,7 +1173,12 @@ def generate_img2img(
             hires_enabled=False,
             samples_shape=tuple(int(dim) for dim in samples.shape),
         )
-        return GenerationResult(samples=samples, decoded=None, metadata=_conditioning_cache_hit_metadata(processing))
+        return GenerationResult(
+            samples=samples,
+            decoded=getattr(runtime_result, "decoded", None) if runtime_result is not None else None,
+            metadata=result_metadata,
+            decode_engine=getattr(runtime_result, "decode_engine", None) if runtime_result is not None else None,
+        )
 
     upscaler_id, target_width, target_height, steps, denoise = hires_execution
     hires_samples = _run_hires_pass(
@@ -1110,7 +1203,7 @@ def generate_img2img(
     return GenerationResult(
         samples=hires_samples,
         decoded=None,
-        metadata=_conditioning_cache_hit_metadata(processing),
+        metadata=result_metadata,
     )
 
 

@@ -1,7 +1,7 @@
 # apps/backend/interfaces/api/routers Overview
 <!-- tags: backend, api, fastapi, routers -->
 Date: 2026-01-08
-Last Review: 2026-03-26
+Last Review: 2026-03-31
 Status: Active
 
 ## Purpose
@@ -18,7 +18,7 @@ Status: Active
 - `apps/backend/interfaces/api/routers/tools.py` — GGUF converter + safetensors merge + file browser + PNG metadata endpoints.
 - `apps/backend/interfaces/api/routers/tests.py` — bounded backend diagnostics endpoints.
 - `apps/backend/interfaces/api/routers/generation.py` — txt2img/img2img/txt2vid/img2vid/vid2vid endpoints.
-- `apps/backend/interfaces/api/routers/supir.py` — SUPIR enhance endpoints (tasks + model diagnostics).
+- `apps/backend/interfaces/api/routers/supir.py` — SUPIR diagnostics-only inventory endpoint (`GET /api/supir/models`).
 - `apps/backend/interfaces/api/routers/upscale.py` — upscalers inventory + remote downloads + standalone upscaling endpoints.
 - `apps/backend/interfaces/api/routers/models.py` also exposes `/api/models/checkpoint-metadata` (UI metadata modal payload for a checkpoint selection).
 
@@ -142,6 +142,7 @@ Status: Active
 - 2026-03-05: `tools.py` adds async safetensors merge endpoints (`POST /api/tools/merge-safetensors`, `GET /api/tools/merge-safetensors/{job_id}`) with fail-loud path validation, synchronous preflight rejection when `output_path` aliases a source shard/source file, and shared tools job payload schema.
 - 2026-03-06: `generation.py` now preflights route-mode capability against `ENGINE_SURFACES` before task creation (`txt2img` / `img2img` / `txt2vid` / `img2vid`), resolves FLUX.2 guidance mode from the selected checkpoint via `model` or `<field_prefix>.model_sha` before validating `cfg` vs `distilled_cfg`, and allows FLUX.2 img2img partial denoise now that the backend continuation path is real; masked FLUX.2 hires remains explicitly rejected.
 - 2026-03-31: `generation.py` now also rejects masked `/api/img2img` requests before task creation when the resolved semantic engine capability surface says `supports_img2img_masking=false`; do not reintroduce frontend-only mask blocklists or runtime-only late rejects for this surface.
+- 2026-03-31: `generation.py` now owns the public SUPIR-mode contract for SDXL img2img/inpaint: `/api/txt2img` rejects `extras.supir`, `/api/img2img` parses only nested `img2img_extras.supir`, exact-engine admissibility comes from `supir_support_error(...)`, and `routers/supir.py` remains diagnostics-only.
 - 2026-03-03: `models.py` add-path endpoints (`POST /api/models/path-scan`, `POST /api/models/path-add`, `POST /api/models/path-add-all`) now keep scan payloads lightweight (`name/path/ext` only; no SHA/type), while add/add-all compute SHA strictly at add-time and process add-all sequentially via add-one semantics (no bulk pre-hash fallback).
 - 2026-03-03: `models.py` now exposes async inventory refresh start (`POST /api/models/inventory/refresh/async`) backed by task registry SSE (`/api/tasks/{id}/events`), with info-level start/completion lifecycle logs and terminal result payload carrying normalized inventory for one-shot frontend refresh application.
 - 2026-03-13: `tasks.py` SSE gap payloads now carry `last_event_id` alongside `oldest_event_id`/`newest_event_id`, and completed `/api/tasks/{id}` snapshots remain the recovery source-of-truth for async inventory refresh when a live `result` event is truncated.

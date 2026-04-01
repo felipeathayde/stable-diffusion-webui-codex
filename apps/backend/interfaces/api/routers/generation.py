@@ -10,8 +10,9 @@ Purpose: Generation API routes (txt2img/img2img/image-automation/txt2vid/img2vid
 Contains request parsing and payload validation (including hires tile config via `extras.hires.tile` / `img2img_hires_tile`, Z-Image Turbo/Base
 `extras.zimage_variant`, and WAN video export options like `video_return_frames`), and delegates image task workers to
 `apps/backend/interfaces/api/tasks/generation_tasks.py`.
-Also owns the backend-owned `/api/image-automation` envelope (loop/seed/prompt/init-source parsing plus repo-fenced folder and wildcard roots) and
-validates nested IP-Adapter selectors/source kinds before delegating runtime application to the shared sampling stage.
+Also owns the backend-owned `/api/image-automation` envelope (loop/seed/prompt/init-source parsing plus repo-fenced folder and wildcard roots),
+validates nested IP-Adapter selectors/source kinds before delegating runtime application to the shared sampling stage, and preflights native
+SUPIR mode under `img2img_extras.supir` for truthful SDXL img2img/inpaint admission.
 Txt2img model-stage ownership is explicit: top-level `extras.swap_model` is the first-pass mid-generation stage config, `extras.hires.swap_model`
 is the selector-only second-pass replacement seam, and `extras.refiner` / `extras.hires.refiner` remain SDXL-native refiner stages.
 Hires supports sampler/scheduler overrides for the hires pass (txt2img: `extras.hires.sampler` / `extras.hires.scheduler`; img2img: `img2img_hires_sampling` / `img2img_hires_scheduler`) and validates override compatibility at API parse-time.
@@ -71,6 +72,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
 
+from apps.backend.infra.config.paths import get_paths_for
 from apps.backend.interfaces.api.path_utils import _path_for_api, _path_from_api
 from apps.backend.interfaces.api.inference_gate import acquire_inference_gate, release_inference_gate, single_flight_enabled
 from apps.backend.interfaces.api.public_errors import (
@@ -121,7 +123,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         engine_supports_cfg,
         ip_adapter_support_error,
         semantic_engine_for_engine_id,
+        supir_support_error,
     )
+    from apps.backend.runtime.families.supir.config import parse_supir_mode_config
+    from apps.backend.runtime.families.supir.errors import SupirBaseModelError, SupirConfigError, SupirWeightsError
+    from apps.backend.runtime.families.supir.loader import resolve_supir_assets
 
     def _ensure_default_engines_registered() -> None:
         # Generation endpoints require the engine registry, but API startup should remain import-light.
@@ -140,7 +146,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
     _TXT2IMG_EXTRAS_KEYS = set(EXTRAS_KEYS.ALL) | _IMAGE_REQUEST_SELECTOR_KEYS
     _TXT2IMG_HIRES_KEYS = set(TXT2IMG_KEYS.HIRES_ALL)
     _IMG2IMG_EXTRAS_KEYS = (
-        set(EXTRAS_KEYS.ALL) - {"hires", "refiner", "batch_size", "batch_count"}
+        (set(EXTRAS_KEYS.ALL) | {"supir"}) - {"hires", "refiner", "batch_size", "batch_count"}
     ) | _IMAGE_REQUEST_SELECTOR_KEYS
     _IMAGE_AUTOMATION_ALLOWED_KEYS = {"mode", "template", "loop", "seed_policy", "prompt_source", "init_source"}
     _IMAGE_AUTOMATION_LOOP_KEYS = {"mode", "count", "delay_ms", "stop_on_error"}
@@ -1978,6 +1984,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if not isinstance(raw, dict):
             raise HTTPException(status_code=400, detail="'extras' must be an object")
         _reject_unknown_keys(raw, _TXT2IMG_EXTRAS_KEYS, "extras")
+        if "supir" in raw:
+            raise HTTPException(
+                status_code=400,
+                detail="'extras.supir' is unsupported for txt2img; SUPIR mode is available only on SDXL img2img/inpaint.",
+            )
         extras: Dict[str, Any] = {}
         ip_adapter_payload = _parse_ip_adapter_payload(
             raw.get("ip_adapter"),
@@ -2517,6 +2528,26 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if detail is None:
             return
         raise HTTPException(status_code=400, detail=detail)
+
+    def _enforce_supir_engine_support(*, engine_key: str, field_name: str) -> None:
+        del field_name
+        detail = supir_support_error(engine_key)
+        if detail is None:
+            return
+        raise HTTPException(status_code=400, detail=detail)
+
+    def _reject_supir_prompt_loras(*, prompt: str, negative_prompt: str) -> None:
+        from apps.backend.runtime.text_processing.extra_nets import ExtraNetsParseError, parse_prompts
+
+        try:
+            _cleaned_prompts, parsed_loras = parse_prompts([prompt, negative_prompt])
+        except ExtraNetsParseError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        if parsed_loras:
+            raise HTTPException(
+                status_code=400,
+                detail="'img2img_extras.supir' cannot be combined with LoRA prompt tags in tranche 1.",
+            )
 
     def _enforce_txt2img_ip_adapter_stage_support(
         *,
@@ -4665,11 +4696,13 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if resize_mode is not None:
             extras["resize_mode"] = resize_mode
         raw_extras = payload.get("img2img_extras")
+        supir_config = None
         if raw_extras is not None:
             if not isinstance(raw_extras, dict):
                 raise HTTPException(status_code=400, detail="'img2img_extras' must be an object")
             _reject_unknown_keys(raw_extras, _IMG2IMG_EXTRAS_KEYS, "img2img_extras")
             raw_extras = dict(raw_extras)
+            raw_supir_payload = raw_extras.get("supir")
             ip_adapter_payload = _parse_ip_adapter_payload(
                 raw_extras.get("ip_adapter"),
                 field_name="img2img_extras.ip_adapter",
@@ -4695,6 +4728,14 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             raw_extras.pop("model_format", None)
             raw_extras.pop("vae_source", None)
             raw_extras.pop("ip_adapter", None)
+            try:
+                supir_config = parse_supir_mode_config(raw_extras.get("supir"))
+            except SupirConfigError as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail=public_http_error_detail(exc, fallback="Invalid 'img2img_extras.supir' configuration"),
+                ) from None
+            raw_extras.pop("supir", None)
 
             te_override = raw_extras.get("text_encoder_override")
             if te_override is not None:
@@ -4744,6 +4785,8 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 raw_extras["ip_adapter"] = ip_adapter_payload
 
             extras.update(raw_extras)
+            if supir_config is not None and isinstance(raw_supir_payload, Mapping):
+                extras["supir"] = dict(raw_supir_payload)
             if checkpoint_core_only is not None:
                 extras["checkpoint_core_only"] = checkpoint_core_only
             if model_format is not None:
@@ -4755,6 +4798,26 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 engine_key=engine_key,
                 field_name="img2img_extras.ip_adapter",
             )
+        if supir_config is not None:
+            _enforce_supir_engine_support(
+                engine_key=engine_key,
+                field_name="img2img_extras.supir",
+            )
+            if bool(hires_data.get("enable")):
+                raise HTTPException(
+                    status_code=400,
+                    detail="'img2img_extras.supir' cannot be combined with img2img hires in tranche 1.",
+                )
+            if isinstance(extras.get("swap_model"), dict):
+                raise HTTPException(
+                    status_code=400,
+                    detail="'img2img_extras.supir' cannot be combined with 'img2img_extras.swap_model'.",
+                )
+            if isinstance(extras.get("ip_adapter"), dict):
+                raise HTTPException(
+                    status_code=400,
+                    detail="'img2img_extras.supir' cannot be combined with 'img2img_extras.ip_adapter'.",
+                )
         # Z-Image variant selection (Turbo/Base) for img2img runs.
         if "zimage_variant" in extras:
             val = extras.get("zimage_variant")
@@ -4805,6 +4868,24 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             resolve_asset_by_sha=resolve_asset_by_sha,
             resolve_vae_path_by_sha=resolve_vae_path_by_sha,
         )
+        if supir_config is not None:
+            try:
+                resolve_supir_assets(
+                    checkpoint_record=checkpoint_record,
+                    variant=supir_config.variant,
+                    supir_models_roots=[Path(path) for path in get_paths_for("supir_models")],
+                )
+            except (SupirBaseModelError, SupirWeightsError) as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail=public_http_error_detail(exc, fallback="SUPIR mode asset validation failed"),
+                ) from None
+            _reject_supir_prompt_loras(prompt=prompt, negative_prompt=negative_prompt)
+            if extras.get("lora_path") is not None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="'img2img_extras.supir' cannot be combined with LoRA selections in tranche 1.",
+                )
 
         metadata = {
             "styles": styles,

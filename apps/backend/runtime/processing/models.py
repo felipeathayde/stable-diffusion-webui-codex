@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Processing model dataclasses (txt2img/img2img) used by engine runtimes and orchestration.
-Defines the stable “processing” parameter containers (hires, first-pass swap stages, refiner, IP-Adapter + common fields) and helpers
+Defines the stable “processing” parameter containers (hires, first-pass swap stages, refiner, IP-Adapter, SUPIR mode + common fields) and helpers
 that normalize list-like inputs so per-batch runs have consistent lengths.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -19,7 +19,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `CodexHiresConfig` (dataclass): Hires configuration (target scale/steps/denoise + upscaler tile config) with override serialization.
 - `CodexProcessingBase` (dataclass): Shared processing fields for image generation runs (prompt/negative/seed/steps/cfg/dims + hi-res/refiner).
 - `CodexProcessingTxt2Img` (dataclass): Txt2img processing container (extends base with txt2img-specific fields).
-- `CodexProcessingImg2Img` (dataclass): Img2img processing container (extends base with init image/mask/strength and inpaint mask controls).
+- `CodexProcessingImg2Img` (dataclass): Img2img processing container (extends base with init image/mask/strength, SUPIR mode, and inpaint mask controls).
 """
 
 from __future__ import annotations
@@ -31,6 +31,7 @@ import logging
 import math
 
 from apps.backend.runtime.adapters.ip_adapter.types import IpAdapterConfig
+from apps.backend.runtime.families.supir.config import SupirModeConfig
 from apps.backend.runtime.vision.upscalers.specs import TileConfig, default_tile_config, tile_config_from_payload
 
 logger = get_backend_logger(__name__)
@@ -542,6 +543,7 @@ class CodexProcessingImg2Img(CodexProcessingBase):
     """Processing description for img2img tasks."""
 
     hires: CodexHiresConfig = field(default_factory=CodexHiresConfig)
+    supir: SupirModeConfig | None = None
     init_image: Any = None
     init_images: Sequence[Any] = field(default_factory=list)
     denoising_strength: float = 0.75

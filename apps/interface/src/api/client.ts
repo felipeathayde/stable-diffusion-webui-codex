@@ -56,6 +56,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `fetchVersion` (function): Fetches backend version (`/version`).
 - `fetchEmbeddings` (function): Fetches embeddings list (`/embeddings`).
 - `fetchEngineCapabilities` (function): Fetches engine capabilities (`/engines/capabilities`).
+- `fetchSupirModels` (function): Fetches cached SUPIR diagnostics/readiness (`/supir/models`) for SDXL img2img/inpaint UI discoverability.
 - `fetchPromptTokenCount` (function): Counts prompt tokens via backend tokenizer (`POST /models/prompt-token-count`).
 - `fetchPaths` (function): Fetches configured paths (`/paths`).
 - `updatePaths` (function): Updates configured paths (`POST /paths`).
@@ -110,6 +111,7 @@ import type {
   ImageAutomationRequest,
   InventoryResponse,
   EngineCapabilitiesResponse,
+  SupirModelsResponse,
   PromptTokenCountRequest,
   PromptTokenCountResponse,
   FileMetadataResponse,
@@ -851,6 +853,10 @@ export function fetchEmbeddings(): Promise<EmbeddingsResponse> {
 
 export function fetchEngineCapabilities(): Promise<EngineCapabilitiesResponse> {
   return requestJson<EngineCapabilitiesResponse>('/engines/capabilities')
+}
+
+export function fetchSupirModels(): Promise<SupirModelsResponse> {
+  return requestJsonCached<SupirModelsResponse>('/supir/models')
 }
 
 export function fetchPromptTokenCount(payload: PromptTokenCountRequest): Promise<PromptTokenCountResponse> {

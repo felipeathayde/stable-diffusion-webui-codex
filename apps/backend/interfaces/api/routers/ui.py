@@ -11,7 +11,7 @@ Purpose: UI persistence and metadata API routes.
     while filtering stale unsupported top-level tab params during stored-tab load and rejecting unknown top-level LTX keys on create/update.
     Normalizes WAN tab aliases (`wan22`, `wan22_5b`, `wan22_14b`, `wan22_14b_animate`) into the canonical UI `wan` tab type and accepts
     a dedicated `ltx2` video workspace tab type. Image-tab persistence also owns the allowlist for nested automation-era params such as
-    `runAction`, `initSource`, and `ipAdapter`.
+    `runAction`, `initSource`, `supir`, and `ipAdapter`.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `build_router` (function): Build the APIRouter for UI endpoints.
@@ -186,6 +186,7 @@ def build_router(
         "maskBlur",
         "maskRound",
         "maskRegionSplit",
+        "supir",
         "ipAdapter",
         "zimageTurbo",
     }
@@ -226,6 +227,7 @@ def build_router(
         "swapModel",
         "refiner",
         "initSource",
+        "supir",
         "ipAdapter",
         "high",
         "low",

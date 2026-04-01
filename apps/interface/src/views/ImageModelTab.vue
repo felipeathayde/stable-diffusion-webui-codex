@@ -11,7 +11,7 @@ Owns prompt + parameter controls, init-image + mask handling for img2img/inpaint
 submit `/api/txt2img`/`/api/img2img` tasks and render progress/results (Z-Image Turbo/Base and FLUX.2 Klein distilled/base-4B are variant-dependent:
 CFG label + negative prompt gating follow the selected checkpoint/tab state, while img2img denoise + hires visibility stay truthful to the active capability/mask contract).
 The RUN surface now owns a split-button `Generate` / `Infinite` action selector, the Initial Image seam owns the `DIR|IMG` source switch for img2img automation,
-and a dedicated IP-Adapter card sits between Prompt and Generation Parameters with nested-owner component APIs plus card-local blocking reasons for in-place recovery.
+and dedicated IP-Adapter + SUPIR cards sit on truthful nested-owner surfaces with parent-owned blocking/gating/readiness and card-local render/emit APIs for in-place recovery.
 When inpaint masking is active, it also forwards natural init-image dimensions, current processing target dimensions, and the current invert-mask state to the shared card/editor preview seam, treats unresolved natural dims as unavailable instead of falling back to processing dims, and normalizes the invalid `maskInvert + maskRegionSplit` pair in the shared parent-owned param path.
 When `useInitImage=true`, generation parameters render through `Img2ImgBasicParametersCard` (shared layout with honest img2img control visibility).
 CFG Advanced/APG controls are capability-gated (`engineSurface.guidance_advanced`) and persist through tab params/profile snapshots.
@@ -30,6 +30,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `sendToWorkflows` (function): Sends the current params snapshot to the workflows subsystem (async).
 - `copyCurrentParams` (function): Copies current params snapshot to clipboard (async).
 - `onCancelRun` (function): Cancels the active run (XYZ sweep immediate stop or current image task cancel).
+- `showSupirModeCard` / `supirBlockingReason` / `supirVariantChoices` / `supirSamplerChoices` (const): SUPIR-mode discoverability, readiness, and nested-owner selector surface for truthful SDXL img2img/inpaint.
 - `copyHistoryParams` (function): Copies a history entry’s params snapshot to clipboard (async).
 - `applyHistory` (function): Applies a history entry back into current state (prompt/params/assets).
 - `formatHistoryTitle` (function): Builds a human-friendly history title from a run entry.
@@ -154,7 +155,7 @@ Symbols (top-level; keep in sync; no ghosts):
         @set:referenceImage="onIpAdapterReferenceFileSet"
         @clear:referenceImage="clearIpAdapterReference"
         @reject:referenceImage="onIpAdapterReferenceRejected"
-      />
+		          />
 
       <div class="panel">
         <div class="panel-header">
@@ -218,8 +219,8 @@ Symbols (top-level; keep in sync; no ghosts):
             @sync-init-image-dims="syncInitImageDims"
           />
 
-          <BasicParametersCard
-            v-else
+	          <BasicParametersCard
+	            v-else
             :samplers="filteredSamplers"
             :schedulers="filteredSchedulers"
             :recommended-samplers="recommendedSamplers"
@@ -259,11 +260,21 @@ Symbols (top-level; keep in sync; no ghosts):
             @update:clipSkip="(v) => setParams({ clipSkip: Math.max(minClipSkip, Math.trunc(v)) })"
             @update:guidanceAdvanced="setGuidanceAdvanced"
             @random-seed="randomizeSeed"
-            @reuse-seed="reuseSeed"
+	            @reuse-seed="reuseSeed"
 	          />
 
-		          <SwapStageSettingsCard
-		            v-if="showGlobalSwapModel"
+	          <SupirModeCard
+	            v-if="showSupirModeCard"
+	            :disabled="isRunning"
+	            :toggleDisabled="supirToggleDisabled"
+	            :supir="params.supir"
+	            :variantChoices="supirVariantChoices"
+	            :samplerChoices="supirSamplerChoices"
+	            :blockingReason="supirBlockingReason"
+	            @patch:supir="setSupir"
+		          />
+				          <SwapStageSettingsCard
+			            v-if="showGlobalSwapModel"
 		            :enabled="params.swapModel.enabled"
 		            :swapAtStep="params.swapModel.swapAtStep"
 		            :maxSteps="Math.max(1, params.steps - 1)"
@@ -567,8 +578,14 @@ Symbols (top-level; keep in sync; no ghosts):
 <script setup lang="ts">
 import { storeToRefs } from 'pinia'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { fetchPaths, fetchSamplers, fetchSchedulers } from '../api/client'
-import type { GeneratedImage, GuidanceAdvancedCapabilities, SamplerInfo, SchedulerInfo } from '../api/types'
+import { fetchPaths, fetchSamplers, fetchSchedulers, fetchSupirModels } from '../api/client'
+import type {
+  GeneratedImage,
+  GuidanceAdvancedCapabilities,
+  SamplerInfo,
+  SchedulerInfo,
+  SupirModelsResponse,
+} from '../api/types'
 import { formatJson, useResultsCard } from '../composables/useResultsCard'
 import { resolveEngineForRequest, useGeneration, type ImageRunHistoryItem } from '../composables/useGeneration'
 import {
@@ -578,6 +595,7 @@ import {
   type ImageBaseParams,
   type ImageRunAction,
   type ImageTabType,
+  type SupirModeFormState,
   type TabByType,
 } from '../stores/model_tabs'
 import { getEngineConfig, getEngineDefaults } from '../stores/engine_config'
@@ -613,6 +631,7 @@ import Img2ImgInpaintParamsCard from '../components/Img2ImgInpaintParamsCard.vue
 import IpAdapterCard from '../components/IpAdapterCard.vue'
 import PromptCard from '../components/prompt/PromptCard.vue'
 import RefinerSettingsCard from '../components/RefinerSettingsCard.vue'
+import SupirModeCard from '../components/SupirModeCard.vue'
 import SwapStageSettingsCard from '../components/SwapStageSettingsCard.vue'
 import WanSubHeader from '../components/wan/WanSubHeader.vue'
 import ResultViewer from '../components/ResultViewer.vue'
@@ -627,6 +646,7 @@ const props = defineProps<{ tabId: string; type: ImageTabType }>()
 type IpAdapterPatch = Partial<Omit<ImageBaseParams['ipAdapter'], 'source'>> & {
   source?: Partial<ImageBaseParams['ipAdapter']['source']>
 }
+type SupirPatch = Partial<ImageBaseParams['supir']>
 
 const store = useModelTabsStore()
 const engineCaps = useEngineCapabilitiesStore()
@@ -665,6 +685,10 @@ const samplers = ref<SamplerInfo[]>([])
 const schedulers = ref<SchedulerInfo[]>([])
 const historyDetailsOpen = ref(false)
 const historyDetailsItem = ref<ImageRunHistoryItem | null>(null)
+const supirDiagnostics = ref<SupirModelsResponse | null>(null)
+const supirDiagnosticsLoading = ref(false)
+const supirDiagnosticsError = ref('')
+const supirDiagnosticsAttempted = ref(false)
 
 onMounted(() => {
   bootstrap
@@ -680,6 +704,20 @@ onMounted(() => {
       // Fatal state is already set by bootstrap store.
     })
 })
+
+async function ensureSupirDiagnosticsLoaded(): Promise<void> {
+  if (supirDiagnostics.value || supirDiagnosticsLoading.value || supirDiagnosticsAttempted.value) return
+  supirDiagnosticsAttempted.value = true
+  supirDiagnosticsLoading.value = true
+  supirDiagnosticsError.value = ''
+  try {
+    supirDiagnostics.value = await fetchSupirModels()
+  } catch (error) {
+    supirDiagnosticsError.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    supirDiagnosticsLoading.value = false
+  }
+}
 
 onBeforeUnmount(() => {
   stopStream()
@@ -885,7 +923,52 @@ const ipAdapterImageEncoderChoices = computed(() => quicksettingsStore.ipAdapter
   value,
   label: toInventoryChoiceLabel(value),
 })))
-const showIpAdapterCard = computed(() => ipAdapterSupported.value || params.value.ipAdapter.enabled)
+const supirEnabled = computed(() => Boolean(params.value.supir.enabled))
+const showSupirModeCard = computed(() => (
+  props.type === 'sdxl'
+  && Boolean(params.value.useInitImage)
+  && Boolean(engineSurface.value?.supports_supir_mode)
+))
+const supirVariantChoices = computed(() => {
+  const expected = supirDiagnostics.value?.supir_models?.expected ?? {}
+  return (supirDiagnostics.value?.variants ?? []).map((entry) => ({
+    value: String(entry.key || '').trim(),
+    label: String(entry.label || entry.key || '').trim(),
+    available: Boolean(expected[String(entry.key || '').trim()]?.present),
+  }))
+})
+const supirSamplerChoices = computed(() => Array.from(new Set(
+  (supirDiagnostics.value?.samplers ?? [])
+    .map((entry) => String(entry || '').trim())
+    .filter((entry) => entry.length > 0),
+)))
+const supirAvailableVariants = computed(() => (
+  supirVariantChoices.value.filter((entry) => entry.available && (entry.value === 'v0F' || entry.value === 'v0Q'))
+))
+const supirSelectedVariantInstalled = computed(() => (
+  supirVariantChoices.value.some((entry) => entry.value === params.value.supir.variant && entry.available)
+))
+const supirSelectedSamplerAvailable = computed(() => (
+  supirSamplerChoices.value.includes(String(params.value.supir.sampler || '').trim())
+))
+const supirSelectionValid = computed(() => (
+  supirSelectedVariantInstalled.value && supirSelectedSamplerAvailable.value
+))
+const supirBlockingReason = computed(() => {
+  if (!showSupirModeCard.value) return ''
+  if (supirDiagnosticsLoading.value) return 'Loading SUPIR diagnostics…'
+  if (supirDiagnosticsError.value) return `Failed to load SUPIR diagnostics: ${supirDiagnosticsError.value}`
+  if (supirAvailableVariants.value.length === 0) return 'No SUPIR variants are installed under the configured supir_models roots.'
+  if (supirSamplerChoices.value.length === 0) return 'The backend did not report any SUPIR samplers.'
+  if (!supirSelectedVariantInstalled.value) return `Selected SUPIR variant '${params.value.supir.variant}' is not installed.`
+  if (!supirSelectedSamplerAvailable.value) return `Selected SUPIR sampler '${params.value.supir.sampler}' is unavailable.`
+  return ''
+})
+const supirToggleDisabled = computed(() => (
+  isRunning.value
+  || (!supirEnabled.value && Boolean(supirBlockingReason.value))
+))
+const showIpAdapterCard = computed(() => !supirEnabled.value && (ipAdapterSupported.value || params.value.ipAdapter.enabled))
 const infiniteXyzConflict = computed(() => params.value.runAction === 'infinite' && xyzStore.enabled)
 const automationBatchConflict = computed(() => (
   usesImageAutomation.value
@@ -933,6 +1016,7 @@ const runGenerateDisabled = computed(() => {
   if (isRunBusy.value) return true
   if (infiniteXyzConflict.value) return true
   if (automationBatchConflict.value) return true
+  if (supirEnabled.value && supirBlockingReason.value) return true
   if (xyzStore.enabled) {
     return !(dependencyReady.value && Boolean(familyCapabilities.value) && supportsTxt2Img.value && filteredSamplers.value.length > 0 && filteredSchedulers.value.length > 0)
   }
@@ -947,6 +1031,7 @@ const runGenerateTitle = computed(() => {
     if (automationBatchConflict.value) return 'Image automation requires batch count = 1 and batch size = 1.'
     if (initFolderMissingPath.value) return 'Initial image folder mode requires a folder path.'
     if (dirInitMaskConflict.value) return 'Mask editing is only available while the initial image source is set to IMG.'
+    if (supirEnabled.value && supirBlockingReason.value) return supirBlockingReason.value
     if (ipAdapterBlockingReason.value) return ipAdapterBlockingReason.value
     if (missingInpaintMask.value) return 'INPAINT is enabled but no mask is applied. Open the mask editor and apply a mask.'
     return generateDisabledReason.value
@@ -988,7 +1073,7 @@ const hiresModePolicy = computed(() => resolveHiresModePolicy(
   supportsHiresForEngine.value,
   Boolean(params.value.useMask),
 ))
-const showHires = computed(() => hiresModePolicy.value.showCard)
+const showHires = computed(() => !supirEnabled.value && hiresModePolicy.value.showCard)
 
 const showGlobalSwapModel = computed(() => !Boolean(params.value.useInitImage))
 
@@ -1340,6 +1425,59 @@ watch(
     if (!enabled || wasEnabled) return
     maybeApplyKontextDefaults()
   },
+)
+
+watch(
+  showSupirModeCard,
+  (show) => {
+    if (!show) {
+      supirDiagnosticsAttempted.value = false
+      if (params.value.supir.enabled) {
+        setSupir({ enabled: false })
+      }
+      return
+    }
+    void ensureSupirDiagnosticsLoaded()
+  },
+  { immediate: true },
+)
+
+watch(
+  () => [
+    params.value.supir.enabled,
+    supirSelectionValid.value,
+    params.value.hires.enabled,
+    Boolean(params.value.hires.refiner?.enabled),
+    Boolean(params.value.hires.swapModel?.model),
+    params.value.ipAdapter.enabled,
+  ] as const,
+  ([enabled, selectionValid, hiresEnabled, hiresRefinerEnabled, hiresSwapModelEnabled, ipAdapterEnabled]) => {
+    if (!enabled || !selectionValid) return
+    const nextPatch: Partial<ImageBaseParams> = {}
+    let needsPatch = false
+    if (hiresEnabled || hiresRefinerEnabled || hiresSwapModelEnabled) {
+      nextPatch.hires = {
+        ...params.value.hires,
+        enabled: false,
+        swapModel: undefined,
+        refiner: params.value.hires.refiner
+          ? { ...params.value.hires.refiner, enabled: false }
+          : params.value.hires.refiner,
+      }
+      needsPatch = true
+    }
+    if (ipAdapterEnabled) {
+      nextPatch.ipAdapter = {
+        ...params.value.ipAdapter,
+        enabled: false,
+      }
+      needsPatch = true
+    }
+    if (needsPatch) {
+      setParams(nextPatch)
+    }
+  },
+  { immediate: true },
 )
 
 watch(
@@ -1719,6 +1857,24 @@ function setInitSource(patch: Partial<ImageBaseParams['initSource']>): void {
     }
   }
   setParams(nextPatch)
+}
+
+function normalizeSupirColorFix(value: unknown, fallback: SupirModeFormState['colorFix']): SupirModeFormState['colorFix'] {
+  return value === 'AdaIN' || value === 'Wavelet' || value === 'None' ? value : fallback
+}
+
+function setSupir(patch: SupirPatch): void {
+  const nextSupir: ImageBaseParams['supir'] = {
+    ...params.value.supir,
+    ...patch,
+  }
+  nextSupir.enabled = Boolean(nextSupir.enabled)
+  nextSupir.variant = nextSupir.variant === 'v0F' ? 'v0F' : 'v0Q'
+  nextSupir.sampler = String(nextSupir.sampler || '').trim()
+  nextSupir.controlScale = clampFloat(Number(nextSupir.controlScale), 0.01, 2)
+  nextSupir.restorationScale = clampFloat(Number(nextSupir.restorationScale), 0.01, 6)
+  nextSupir.colorFix = normalizeSupirColorFix(nextSupir.colorFix, params.value.supir.colorFix)
+  setParams({ supir: nextSupir })
 }
 
 function setIpAdapter(patch: IpAdapterPatch): void {

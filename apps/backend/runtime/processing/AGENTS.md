@@ -22,3 +22,4 @@ Status: Active
 - 2026-03-24: `CodexProcessingImg2Img` now carries `per_step_blend_strength` (`0..1`, default `1.0`) for masked `per_step_clamp`; this scalar is part of the typed runtime handoff, not an inferred hook-side default.
 - 2026-03-25: `CodexProcessingTxt2Img.swap_model` is now a first-pass stage config (`SwapStageConfig`), while `CodexHiresConfig.swap_model` stays selector-only (`SwapModelConfig`). Do not collapse those two seams back into one type.
 - 2026-03-26: `PromptContext` now carries a dedicated request-owned `clip_skip` field instead of a generic prompt-control bag. Prompt-tag runtime controls are gone; prompt text is LoRA-only at the angle-bracket seam.
+- 2026-03-31: `CodexProcessingImg2Img` now carries `supir: SupirModeConfig | None` as the single runtime owner for native SDXL img2img/inpaint SUPIR mode; do not mirror that owner back into generic override maps.

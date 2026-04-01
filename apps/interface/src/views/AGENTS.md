@@ -1,7 +1,7 @@
 # apps/interface/src/views Overview
 <!-- tags: frontend, views, model-tabs -->
 Date: 2025-10-28
-Last Review: 2026-03-24
+Last Review: 2026-03-31
 Status: Active
 
 ## Purpose
@@ -11,6 +11,7 @@ Status: Active
 - Views should compose reusable components and stores; avoid duplicating logic that belongs in shared modules.
 - Keep routes documented in `apps/interface/src/router.ts` and the UI taxonomy in `.sangoi/frontend/guidelines/`.
 - 2026-03-21: `ImageModelTab.vue` now snaps ZImage width/height and init-image sync to a `16px` grid, reconciles persisted state on mount/engine switch, and restricts ZImage img2img resize controls to the truthful pixel-space modes the backend currently implements.
+- 2026-03-31: `ImageModelTab.vue` must fail loud on stale SUPIR inventory selections; do not auto-heal unavailable SUPIR variants/samplers into the first reported choice, and do not let an invalid stored selection toggle SUPIR on and clear conflicting hires/IP-Adapter state before the user fixes the selection.
 - 2026-03-24: `ImageModelTab.vue` now forwards both natural init-image dimensions and current processing target dimensions into the shared inpaint preview seam so the card/editor crop preview stays aligned with the real generation target.
 - 2026-03-25: `ImageModelTab.vue` now exposes the generic first-pass swap stage via `SwapStageSettingsCard.vue` on txt2img only (`params.swapModel`), keeps `params.hires.swapModel` as the second-pass whole-engine selector, and disables the global swap stage when the tab enters img2img so no hidden active first-pass swap survives.
 - 2026-03-03: `Home.vue` Docs & Help reference paths now point only to repo-shipped docs under `apps/**` and root docs (`SUBSYSTEM-MAP.md`, `apps/**/AGENTS.md`), with no `.sangoi` path mentions.

@@ -15,7 +15,8 @@ Exposes task cancellation for active runs (`/api/tasks/:id/cancel`).
 Persists a per-tab resume marker to `localStorage` and auto-reattaches to in-flight tasks after reload (SSE replay via `after` / `lastEventId`),
 reconstructing truthful `currentRun` / history-selection state and preserving wall-clock gentime for runs that finish after resume.
 FLUX.2 img2img guidance emission is variant-aware (`img2img_cfg_scale` xor `img2img_distilled_cfg_scale`), and img2img hires emission is
-shared with the canonical hires payload builder while remaining blocked for masked runs.
+shared with the canonical hires payload builder while remaining blocked for masked runs. Native SDXL SUPIR mode stays on the single nested frontend owner
+`params.supir` and is emitted only through `img2img_extras.supir` for truthful SDXL img2img/inpaint runs.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ImageRunHistoryItem` (interface): Persisted per-tab run history entry (task id, status, summary, params snapshot, error message).
@@ -28,6 +29,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `BuildImg2ImgPayloadArgs` (interface): Input contract for deterministic img2img payload assembly.
 - `buildImg2ImgPayload` (function): Builds img2img start payload at the source, including capability-gated unmasked hires fields.
 - `buildGuidancePayload` (function): Builds `extras.guidance` payload from tab state + per-engine advanced-guidance support matrix.
+- `buildSupirPayload` (function): Normalizes the nested SUPIR request owner into `img2img_extras.supir` and rejects stale conflicting state.
 - `usesImageAutomation` (function): Detects when the current image-tab state must use backend-owned `/api/image-automation`.
 - `buildIpAdapterPayload` (function): Normalizes the nested IP-Adapter request owner into the route-local `extras.ip_adapter` carrier.
 - `resolveAutomationLoop` (function): Builds the bounded vs `until_cancelled` automation loop contract from tab state.
@@ -49,6 +51,7 @@ import {
   type BaseTab,
   type GuidanceAdvancedParams,
   type ImageBaseParams,
+  type SupirModeFormState,
 } from '../stores/model_tabs'
 import { useQuicksettingsStore } from '../stores/quicksettings'
 import { useEngineCapabilitiesStore } from '../stores/engine_capabilities'
@@ -498,6 +501,51 @@ export function buildImg2ImgPayload(args: BuildImg2ImgPayloadArgs): Record<strin
   return payload
 }
 
+function buildSupirPayload(
+  supir: SupirModeFormState,
+  options: {
+    engineId: string
+    useInitImage: boolean
+    supportsSupirMode: boolean
+    hiresEnabled: boolean
+    ipAdapterEnabled: boolean
+    hasLoraSelection: boolean
+  },
+): Record<string, unknown> | null {
+  if (!normalizeBooleanParam(supir.enabled, false)) return null
+  if (!options.useInitImage) {
+    throw new Error('SUPIR mode is only available for SDXL img2img/inpaint.')
+  }
+  if (!options.supportsSupirMode || options.engineId !== 'sdxl') {
+    throw new Error('SUPIR mode is only available for native SDXL img2img/inpaint.')
+  }
+  if (options.hiresEnabled) {
+    throw new Error('SUPIR mode cannot be combined with img2img hires. Disable SUPIR mode or hires before generating.')
+  }
+  if (options.ipAdapterEnabled) {
+    throw new Error('SUPIR mode cannot be combined with IP-Adapter. Disable SUPIR mode or IP-Adapter before generating.')
+  }
+  if (options.hasLoraSelection) {
+    throw new Error('SUPIR mode cannot be combined with LoRA selections. Remove LoRA tags before generating.')
+  }
+  const sampler = String(supir.sampler || '').trim()
+  if (!sampler) {
+    throw new Error('Select a SUPIR sampler.')
+  }
+  const variant = supir.variant === 'v0F' ? 'v0F' : 'v0Q'
+  const colorFix = supir.colorFix === 'AdaIN' || supir.colorFix === 'Wavelet' ? supir.colorFix : 'None'
+  const controlScale = Number.isFinite(Number(supir.controlScale)) ? Number(supir.controlScale) : 0.8
+  const restorationScale = Number.isFinite(Number(supir.restorationScale)) ? Number(supir.restorationScale) : 4
+  return {
+    enabled: true,
+    variant,
+    sampler,
+    controlScale: Math.min(2, Math.max(0.01, controlScale)),
+    restorationScale: Math.min(6, Math.max(0.01, restorationScale)),
+    colorFix,
+  }
+}
+
 export function buildGuidancePayload(
   guidanceAdvanced: GuidanceAdvancedParams,
   support: GuidanceAdvancedCapabilities | null | undefined,
@@ -765,6 +813,7 @@ export function useGeneration(tabId: string) {
       initSource: p.initSource,
       initImageName: p.initImageName,
       denoiseStrength: p.denoiseStrength,
+      supir: p.supir,
       ipAdapter: p.ipAdapter,
     }
   }
@@ -1035,6 +1084,24 @@ export function useGeneration(tabId: string) {
       const ipAdapterPayload = buildIpAdapterPayload(p, { useInitImage })
       if (ipAdapterPayload) {
         extras.ip_adapter = ipAdapterPayload
+      }
+    } catch (error) {
+      state.value.status = 'error'
+      state.value.errorMessage = error instanceof Error ? error.message : String(error)
+      return
+    }
+
+    try {
+      const supirPayload = buildSupirPayload(p.supir, {
+        engineId: engineOverrideForRequest,
+        useInitImage,
+        supportsSupirMode: Boolean(engineSurface.supports_supir_mode),
+        hiresEnabled: normalizeBooleanParam(p.hires?.enabled, false),
+        ipAdapterEnabled: normalizeBooleanParam(p.ipAdapter?.enabled, false),
+        hasLoraSelection: loraNames.length > 0,
+      })
+      if (supirPayload) {
+        extras.supir = supirPayload
       }
     } catch (error) {
       state.value.status = 'error'

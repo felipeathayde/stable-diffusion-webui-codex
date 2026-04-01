@@ -11,7 +11,6 @@ Status: Active
 ## Key Files
 - `apps/backend/interfaces/api/tasks/generation_tasks.py` — common task runner helpers for generation endpoints (event streaming, engine options build, image encoding).
 - `apps/backend/interfaces/api/tasks/upscale_tasks.py` — task workers for standalone `/api/upscale` and HF upscaler downloads (`/api/upscalers/download`) with explicit integrity verification (manifest sha256 when available).
-- `apps/backend/interfaces/api/tasks/supir_tasks.py` — task worker for `/api/supir/enhance` orchestration and cancellation handling.
 
 ## Notes
 - 2026-03-20: `generation_tasks.py::build_engine_options(...)` now requires and forwards image selectors `checkpoint_core_only`, `model_format`, and `vae_source` from request extras unchanged; task helpers fail loud instead of re-authoring image asset/source semantics behind the router contract.
@@ -25,12 +24,13 @@ Status: Active
 - 2026-02-16: `generation_tasks.py` now enforces strict bool parsing for request smart flags via `resolve_request_smart_flags(...)` and drains orchestrator iterators on immediate-cancel paths (no early-return teardown bypass; inference-gate release happens after iterator/use-case finalizers complete).
 - 2026-02-18: `generation_tasks.py` now serializes PNG `parameters` as A1111-compatible infotext (prompt + optional negative prompt + KV line) instead of JSON blobs, while still preserving provenance text chunks separately.
 - 2026-02-18: `generation_tasks.py` inference-gate wait cancellation now honors any requested cancel mode (`immediate` or `after_current`) before work starts; once running, only `immediate` interrupts in-flight generation.
-- 2026-02-18: `upscale_tasks.py` and `supir_tasks.py` now follow the same gate-wait rule: any cancel mode aborts before start while `immediate` remains the only in-flight interrupt mode.
+- 2026-02-18: `upscale_tasks.py` follows the shared gate-wait rule: any cancel mode aborts before start while `immediate` remains the only in-flight interrupt mode.
 - 2026-02-21: `generation_tasks.py` now exposes `force_runtime_memory_cleanup(...)` and invokes it on image worker exceptions to force best-effort cleanup of orchestrator cache, runtime memory manager state, and CUDA cache.
 - 2026-02-28: `generation_tasks.py::force_runtime_memory_cleanup(...)` removed the optional `operations_gguf.clear_cache` import/call path to avoid stale helper warnings after GGUF cache-hook removal.
 - 2026-02-22: `generation_tasks.py::force_runtime_memory_cleanup(...)` now logs cleanup failures without traceback payload (`exc_info=False`), preventing repeated stacktrace floods when CUDA is already in OOM/error state after engine failure.
 - 2026-02-21: `generation_tasks.py::build_engine_options(...)` now parses settings key `codex_core_streaming` via shared strict bool parsing and emits canonical engine option `core_streaming_enabled` (no truthiness coercion from malformed option snapshots).
 - 2026-02-21: `generation_tasks.py` now parses `samples_save` via shared strict bool parsing before output persistence, removing permissive `bool("false")==True` behavior.
-- 2026-02-22: task workers now log warning-level diagnostics when inference-gate release fails (`generation_tasks.py`, `upscale_tasks.py`, `supir_tasks.py`) instead of silently swallowing release errors.
+- 2026-02-22: task workers now log warning-level diagnostics when inference-gate release fails (`generation_tasks.py`, `upscale_tasks.py`) instead of silently swallowing release errors.
+- 2026-03-31: standalone SUPIR task workers were removed when SUPIR mode moved into the canonical SDXL `img2img.py` owner path; this package now owns only generic generation workers plus standalone upscale/download tasks.
 - 2026-03-02: `generation_tasks.py` now preserves `ProgressEvent.message` and `ProgressEvent.data` in streamed `progress` task events, so frontend consumers can render phase-aware total-progress metadata from backend-emitted payloads.
 - 2026-03-31: `generation_tasks.py` now clears raw progress state per task run and passes the expected task owner token into `live_preview_service.py`; workers remain thin forwarders and must not read raw preview fields from `core.state` directly.

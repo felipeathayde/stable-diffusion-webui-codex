@@ -9,11 +9,12 @@ Required Notice: see NOTICE
 Purpose: Model Tabs store (tab definitions + per-tab params + ordering) for the WebUI.
 Owns the list of engine tabs, persists tab CRUD/reorder via `/api/ui/tabs`, normalizes/validates tab payloads from the backend, and provides
 default parameter shapes per tab type (image vs WAN/LTX video) using engine defaults and form-state schemas. Image-tab second-pass model state lives
-under typed `swapModel` owners (global `swapModel`, hires `hires.swapModel`), and stale legacy `hires.checkpoint` / refiner-embedded `vae` snapshot
+under typed `swapModel` owners (global `swapModel`, hires `hires.swapModel`), native SDXL img2img/inpaint SUPIR state lives under the single nested
+owner `supir`, and stale legacy `hires.checkpoint` / refiner-embedded `vae` snapshot
 fields are dropped during hydration instead of being preserved as rename glue. Hires upscaler values are stable ids
 (`latent:*` / `spandrel:*`) for hires-fix wiring, and img2img UI keeps an explicit resize/upscaler layout state (`img2imgResizeMode`,
-`img2imgUpscaler`) decoupled from backend hires dispatch. Image automation and IP-Adapter UI state now stay under canonical owners
-(`runAction`, `initSource`, `ipAdapter`) instead of drifting into flat helper fields. WAN video normalization persists no-stretch img2vid guide controls
+`img2imgUpscaler`) decoupled from backend hires dispatch. Image automation, SUPIR mode, and IP-Adapter UI state now stay under canonical owners
+(`runAction`, `initSource`, `supir`, `ipAdapter`) instead of drifting into flat helper fields. WAN video normalization persists no-stretch img2vid guide controls
 (`img2vidImageScale`, `img2vidCropOffsetX`, `img2vidCropOffsetY`) with range normalization, clamps WAN stage schedulers to canonical `simple`,
 backfills blank WAN stage samplers to explicit `uni-pc bh2`, and persists both scheduler/sampler backfills through the normal tab-persistence
 queue without blocking tab hydration. FLUX.2 tabs keep the truthful Klein 4B / base-4B slice contract by capping `textEncoders` to one
@@ -38,12 +39,13 @@ Symbols (top-level; keep in sync; no ghosts):
 - `BaseTab` (interface): Generic tab record persisted in the store (id/type/label + params + meta).
 - `ImageBaseParams` (interface): Common image-tab params (prompt, seed, steps, CFG, dims, etc.) shared across SD/Flux.1/Flux.2/Chroma/ZImage
   (includes optional family-specific fields like `zimageTurbo`, img2img layout state `img2imgResizeMode`/`img2imgUpscaler`,
-  inpaint mask controls (`maskRegionSplit` and related toggles), image automation owners (`runAction`, `initSource`, `ipAdapter`), and advanced guidance policy controls).
+  inpaint mask controls (`maskRegionSplit` and related toggles), image automation owners (`runAction`, `initSource`, `supir`, `ipAdapter`), and advanced guidance policy controls).
 - `ImageRunAction` (type): Run CTA mode discriminator (`generate|infinite`) persisted per image tab.
 - `ImageFolderSelectionMode` (type): Folder traversal amount discriminator (`all|count`) used by init/IP-Adapter directory sources.
 - `ImageFolderOrderMode` (type): Folder traversal order discriminator (`random|sorted`) used by init/IP-Adapter directory sources.
 - `ImageFolderSortBy` (type): Sort key discriminator for ordered directory traversal (`name|size|created_at|modified_at`).
 - `InitSourceFormState` (interface): Img2img initial-image source owner (`img|dir` plus directory traversal settings and crop toggle).
+- `SupirModeFormState` (interface): Native SDXL img2img/inpaint SUPIR owner (`enabled`, variant/sampler selectors, and tranche-1 restore controls).
 - `IpAdapterSourceFormState` (interface): IP-Adapter source owner (`img|dir`, uploaded reference image, same-as-init shortcut, and directory traversal settings).
 - `IpAdapterFormState` (interface): IP-Adapter card state owner (enable flag, asset selectors, source owner, and strength range controls).
 - `GuidanceAdvancedParams` (interface): Per-tab advanced guidance policy state (APG/rescale/trunc/renorm).
@@ -289,6 +291,7 @@ export interface ImageBaseParams {
   maskBlur: number
   maskRound: boolean
   maskRegionSplit: boolean
+  supir: SupirModeFormState
   ipAdapter: IpAdapterFormState
   zimageTurbo?: boolean
 }
@@ -306,6 +309,18 @@ export interface InitSourceFormState {
   order: ImageFolderOrderMode
   sortBy: ImageFolderSortBy
   useCrop: boolean
+}
+
+export type SupirVariant = 'v0F' | 'v0Q'
+export type SupirColorFixMode = 'None' | 'AdaIN' | 'Wavelet'
+
+export interface SupirModeFormState {
+  enabled: boolean
+  variant: SupirVariant
+  sampler: string
+  controlScale: number
+  restorationScale: number
+  colorFix: SupirColorFixMode
 }
 
 export interface IpAdapterSourceFormState {
@@ -426,6 +441,7 @@ const IMAGE_PARAM_TOP_LEVEL_KEYS = new Set<string>([
   'maskBlur',
   'maskRound',
   'maskRegionSplit',
+  'supir',
   'ipAdapter',
   'zimageTurbo',
 ])
@@ -666,6 +682,14 @@ function defaultParams<T extends BaseTabType>(
     startAt: 0,
     endAt: 1,
   }
+  const supirDefaults: SupirModeFormState = {
+    enabled: false,
+    variant: 'v0Q',
+    sampler: 'Restore Euler EDM (Stable)',
+    controlScale: 0.8,
+    restorationScale: 4,
+    colorFix: 'None',
+  }
   const imageDefaults: ImageBaseParams = {
     schemaVersion: TAB_PARAMS_SCHEMA_VERSION,
     prompt: '',
@@ -706,6 +730,7 @@ function defaultParams<T extends BaseTabType>(
     maskBlur: 4,
     maskRound: true,
     maskRegionSplit: true,
+    supir: { ...supirDefaults },
     ipAdapter: { ...ipAdapterDefaults, source: { ...ipAdapterDefaults.source } },
   }
   if (type === 'zimage') {
@@ -986,6 +1011,33 @@ function normalizeInitSourceFormState(rawValue: unknown, defaults: InitSourceFor
     order: normalizeImageFolderOrderMode(patch.order, defaults.order),
     sortBy: normalizeImageFolderSortBy(patch.sortBy, defaults.sortBy),
     useCrop: normalizeBoolean(patch.useCrop, defaults.useCrop),
+  }
+}
+
+function normalizeSupirVariant(rawValue: unknown, fallback: SupirVariant): SupirVariant {
+  return rawValue === 'v0F' || rawValue === 'v0Q' ? rawValue : fallback
+}
+
+function normalizeSupirColorFixMode(rawValue: unknown, fallback: SupirColorFixMode): SupirColorFixMode {
+  return rawValue === 'None' || rawValue === 'AdaIN' || rawValue === 'Wavelet' ? rawValue : fallback
+}
+
+function normalizePositiveSupirNumber(rawValue: unknown, fallback: number, maxValue: number): number {
+  const numeric = Number(rawValue)
+  if (!Number.isFinite(numeric) || numeric <= 0) return fallback
+  return Math.min(maxValue, numeric)
+}
+
+function normalizeSupirModeFormState(rawValue: unknown, defaults: SupirModeFormState): SupirModeFormState {
+  const patch = asRecordObject(rawValue)
+  const sampler = String(patch.sampler || '').trim() || defaults.sampler
+  return {
+    enabled: normalizeBoolean(patch.enabled, defaults.enabled),
+    variant: normalizeSupirVariant(patch.variant, defaults.variant),
+    sampler,
+    controlScale: normalizePositiveSupirNumber(patch.controlScale, defaults.controlScale, 2),
+    restorationScale: normalizePositiveSupirNumber(patch.restorationScale, defaults.restorationScale, 6),
+    colorFix: normalizeSupirColorFixMode(patch.colorFix, defaults.colorFix),
   }
 }
 
@@ -1352,6 +1404,7 @@ function normalizeImageParams(raw: unknown, defaults: ImageBaseParams): ImageBas
   const swapModelPatch = asRecordObject(patch.swapModel)
   const refinerPatch = asRecordObject(patch.refiner)
   const initSourcePatch = asRecordObject(patch.initSource)
+  const supirPatch = asRecordObject(patch.supir)
   const ipAdapterPatch = asRecordObject(patch.ipAdapter)
   const ipAdapterSourcePatch = asRecordObject(ipAdapterPatch.source)
 
@@ -1388,6 +1441,10 @@ function normalizeImageParams(raw: unknown, defaults: ImageBaseParams): ImageBas
     initSource: {
       ...defaults.initSource,
       ...(initSourcePatch as Partial<InitSourceFormState>),
+    },
+    supir: {
+      ...defaults.supir,
+      ...(supirPatch as Partial<SupirModeFormState>),
     },
     ipAdapter: {
       ...defaults.ipAdapter,
@@ -1464,6 +1521,7 @@ function normalizeImageParams(raw: unknown, defaults: ImageBaseParams): ImageBas
   )
   merged.runAction = normalizeImageRunAction(merged.runAction, defaults.runAction)
   merged.initSource = normalizeInitSourceFormState(merged.initSource, defaults.initSource)
+  merged.supir = normalizeSupirModeFormState(merged.supir, defaults.supir)
   merged.ipAdapter = normalizeIpAdapterFormState(merged.ipAdapter, defaults.ipAdapter)
   if (merged.ipAdapter.endAt < merged.ipAdapter.startAt) {
     merged.ipAdapter.endAt = merged.ipAdapter.startAt

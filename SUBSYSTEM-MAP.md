@@ -26,9 +26,10 @@ Status: Active
 ### Keymaps
 - Open first: `apps/backend/runtime/state_dict/key_mapping.py`
 - Secondary seams:
+  - `apps/backend/runtime/state_dict/keymap_anima_transformer.py`
   - `apps/backend/runtime/state_dict/keymap_wan22_transformer.py`
   - `apps/backend/runtime/state_dict/AGENTS.md`
-- Use this when you are mapping upstream checkpoint keyspaces into the canonical runtime lookup view without rewriting stored keys.
+- Use this when you are mapping upstream checkpoint keyspaces into the canonical runtime lookup view without rewriting stored keys, including raw Anima core checkpoints stored under `net.*`.
 
 <a id="map-hotspot-vae-codex3d"></a>
 ### Native Conv3D VAE
@@ -61,6 +62,15 @@ Status: Active
   - `apps/backend/runtime/adapters/ip_adapter/`
   - `apps/backend/interfaces/api/routers/generation.py`
 - Use this when adapter model/image-encoder selection, reference-image preprocessing, or per-sampling patch application is the seam.
+
+<a id="map-hotspot-supir-runtime"></a>
+### SUPIR Runtime
+- Open first: `apps/backend/runtime/families/supir/runtime.py`
+- Secondary seams:
+  - `apps/backend/use_cases/img2img.py`
+  - `apps/backend/interfaces/api/routers/generation.py`
+  - `apps/backend/runtime/families/supir/loader.py`
+- Use this when native SDXL img2img/inpaint SUPIR mode, restore-anchor sampling, or SUPIR variant/base-checkpoint validation is the seam.
 
 <a id="map-hotspot-attention-sram-v1"></a>
 ### attention_sram_v1
@@ -112,16 +122,17 @@ Status: Active
 ### img2img
 | Node | Owner | What happens here | Next |
 | --- | --- | --- | --- |
-| Public route | `apps/backend/interfaces/api/routers/generation.py` (`/api/img2img`) | Validates payload + route capability, rejects masked requests when the semantic engine capability surface says img2img masking is unsupported, then creates the task and picks the explicit device. | shared image task worker |
+| Public route | `apps/backend/interfaces/api/routers/generation.py` (`/api/img2img`) | Validates payload + route capability, rejects masked requests when the semantic engine capability surface says img2img masking is unsupported, preflights native `img2img_extras.supir` on exact SDXL engine ids, then creates the task and picks the explicit device. | shared image task worker |
 | Shared image task worker | `apps/backend/interfaces/api/tasks/generation_tasks.py` | Calls `prepare_img2img(...)`, owns inference-gate/task lifecycle, and packages the terminal image result. | orchestrator |
 | Orchestrator | `apps/backend/core/orchestrator.py` | Resolves engine/load/cache state and dispatches to the mode wrapper. | engine `img2img(...)` wrapper |
 | Engine wrapper | `apps/backend/engines/common/base.py` | Delegates to the canonical img2img use-case. | `run_img2img(...)` |
-| Canonical use-case | `apps/backend/use_cases/img2img.py` | Owns classic-family dispatch, init-image planning, prompt/sampling plans, optional masked img2img, and optional hires continuation. | shared stage helpers + sampler |
+| Canonical use-case | `apps/backend/use_cases/img2img.py` | Owns classic-family dispatch, init-image planning, prompt/sampling plans, optional native SUPIR mode, optional masked img2img, and optional hires continuation. | shared stage helpers + sampler |
 | Shared stage helpers | `apps/backend/runtime/pipeline_stages/masked_img2img.py` and `apps/backend/runtime/pipeline_stages/hires_fix.py` | Prepare masked bundles, image conditioning, hires latents, and continuation hand-off. | API result packaging |
 | Terminal surfaces | `apps/backend/interfaces/api/tasks/generation_tasks.py` and `apps/backend/interfaces/api/routers/tasks.py` | Store the encoded result payload and expose terminal snapshot/SSE state. | end |
 
 Branch notes:
 - Classic base img2img resolves SD-vs-flow dispatch locally in `apps/backend/use_cases/img2img.py` before masked/unmasked prep.
+- SDXL SUPIR mode stays inside the canonical img2img owner: route preflight lives in `apps/backend/interfaces/api/routers/generation.py`, while the request-scoped restore runtime lives in `apps/backend/runtime/families/supir/runtime.py`.
 - Kontext-specific img2img work stays local to `apps/backend/use_cases/img2img.py`.
 - FLUX.2 keeps its own engine-side img2img seam at `apps/backend/engines/flux2/img2img.py`; the public route still enters through the same router/task/orchestrator chain.
 
@@ -177,7 +188,7 @@ Branch notes:
 | Node | Owner | What happens here | Next |
 | --- | --- | --- | --- |
 | App bootstrap | `apps/backend/interfaces/api/run_api.py` | Builds the FastAPI app, validates startup/runtime settings, and mounts the routers. Repo-owned bootstrap/server logs consume the canonical wrapper family from `apps/backend/runtime/logging.py`, while the remaining raw logger carve-out is the explicit `uvicorn.access` integration seam. | router module build |
-| Router mount | `apps/backend/interfaces/api/run_api.py` | Includes `system`, `settings`, `ui`, `models`, `paths`, `options`, `tasks`, `tests`, `tools`, `upscale`, `supir`, and `generation`. | public routes |
+| Router mount | `apps/backend/interfaces/api/run_api.py` | Includes `system`, `settings`, `ui`, `models`, `paths`, `options`, `tasks`, `tests`, `tools`, `upscale`, `supir`, and `generation`; the `supir` router is diagnostics-only. | public routes |
 | Public entry | router modules under `apps/backend/interfaces/api/routers/` | Expose the task-backed generation/system/tool surfaces. | task or direct route handling |
 
 ## Owner seam atlas
@@ -187,6 +198,7 @@ Branch notes:
 - Owns:
   - public generation routes
   - payload parsing and route-level capability guards
+  - exact-engine SUPIR-mode preflight for canonical img2img/inpaint
   - task creation and worker thread hand-off
 - Do not move mode execution into this file; it should stay validate + dispatch + stream.
 

@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Request→processing adapters for txt2img/img2img (hires/swap-model/refiner/smart flags).
-Builds Codex processing objects from API request DTOs, including Hires, first-pass swap-model, Refiner, and IP-Adapter configs (with hires
+Builds Codex processing objects from API request DTOs, including Hires, first-pass swap-model, Refiner, IP-Adapter, and SUPIR mode configs (with hires
 tile config), per-job smart runtime flags, and strict pass-through overrides like `extras.er_sde` for sampler runtime wiring.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -18,7 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_build_ip_adapter_config` (function): Builds a typed `IpAdapterConfig` from request payload data.
 - `_build_refiner_config` (function): Builds a `RefinerConfig` from request payload data.
 - `build_txt2img_processing` (function): Converts a `Txt2ImgRequest` into a fully-populated `CodexProcessingTxt2Img`.
-- `build_img2img_processing` (function): Converts an `Img2ImgRequest` into a fully-populated `CodexProcessingImg2Img` (including inpaint mask wiring).
+- `build_img2img_processing` (function): Converts an `Img2ImgRequest` into a fully-populated `CodexProcessingImg2Img` (including inpaint mask wiring + typed SUPIR ownership).
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ import logging
 
 from apps.backend.core.requests import Img2ImgRequest, Txt2ImgRequest
 from apps.backend.runtime.adapters.ip_adapter.types import IpAdapterConfig, IpAdapterSourceConfig
+from apps.backend.runtime.families.supir.config import parse_supir_mode_config
 from apps.backend.runtime.processing.models import (
     CodexHiresConfig,
     CodexProcessingImg2Img,
@@ -444,6 +445,7 @@ def build_img2img_processing(req: Img2ImgRequest) -> CodexProcessingImg2Img:
 
     metadata = dict(req.metadata or {})
     extras = req.extras if isinstance(req.extras, Mapping) else {}
+    supir_config = parse_supir_mode_config(extras.get("supir"))
     iterations = _parse_batch_count(extras)
     if getattr(req, "clip_skip", None) is not None:
         metadata["clip_skip"] = int(req.clip_skip)
@@ -504,6 +506,7 @@ def build_img2img_processing(req: Img2ImgRequest) -> CodexProcessingImg2Img:
         smart_offload=smart_offload,
         smart_fallback=smart_fallback,
         smart_cache=smart_cache,
+        supir=supir_config,
     )
     processing.ip_adapter = _build_ip_adapter_config(
         extras.get("ip_adapter"),
@@ -519,7 +522,7 @@ def build_img2img_processing(req: Img2ImgRequest) -> CodexProcessingImg2Img:
         if hires_cfg.enabled:
             processing.enable_hires(hires_cfg)
     for key, value in extras.items():
-        if key == "ip_adapter":
+        if key in {"ip_adapter", "supir"}:
             continue
         if key == "er_sde" and isinstance(value, Mapping):
             processing.update_override(key, dict(value))

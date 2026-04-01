@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Conditioning helpers for diffusion sampling (tensor and dict-based conditioning payloads).
 Enforces shape invariants and wraps conditioning tensors in small helper classes used by samplers and legacy adapters, including optional
-dual-tokenization extras (`t5xxl_ids`/`t5xxl_weights`) required by Anima conditioning.
+dual-tokenization extras (`t5xxl_ids`/`t5xxl_weights`/`t5xxl_attention_mask`) required by Anima conditioning.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `repeat_to_batch_size` (function): Repeat/slice a tensor batch dimension to match a target batch size.
@@ -200,12 +200,16 @@ def compile_conditions(cond):
 
     has_t5_ids = 't5xxl_ids' in cond
     has_t5_weights = 't5xxl_weights' in cond
-    if has_t5_ids != has_t5_weights:
-        raise ValueError("conditioning must provide both 't5xxl_ids' and 't5xxl_weights' together")
+    has_t5_mask = 't5xxl_attention_mask' in cond
+    if len({has_t5_ids, has_t5_weights, has_t5_mask}) != 1:
+        raise ValueError(
+            "conditioning must provide 't5xxl_ids', 't5xxl_weights', and 't5xxl_attention_mask' together"
+        )
 
     if has_t5_ids:
         t5xxl_ids = cond['t5xxl_ids']
         t5xxl_weights = cond['t5xxl_weights']
+        t5xxl_attention_mask = cond['t5xxl_attention_mask']
         if not isinstance(t5xxl_ids, torch.Tensor) or t5xxl_ids.ndim != 2:
             raise ValueError(
                 f"'t5xxl_ids' must be a 2D tensor (B,S); got {type(t5xxl_ids).__name__} "
@@ -216,10 +220,20 @@ def compile_conditions(cond):
                 f"'t5xxl_weights' must be a 2D tensor (B,S); got {type(t5xxl_weights).__name__} "
                 f"shape={getattr(t5xxl_weights, 'shape', None)}"
             )
+        if not isinstance(t5xxl_attention_mask, torch.Tensor) or t5xxl_attention_mask.ndim != 2:
+            raise ValueError(
+                f"'t5xxl_attention_mask' must be a 2D tensor (B,S); got {type(t5xxl_attention_mask).__name__} "
+                f"shape={getattr(t5xxl_attention_mask, 'shape', None)}"
+            )
         if t5xxl_ids.shape != t5xxl_weights.shape:
             raise ValueError(
                 "conditioning shape mismatch: "
                 f"t5xxl_ids={tuple(t5xxl_ids.shape)} t5xxl_weights={tuple(t5xxl_weights.shape)}"
+            )
+        if t5xxl_ids.shape != t5xxl_attention_mask.shape:
+            raise ValueError(
+                "conditioning shape mismatch: "
+                f"t5xxl_ids={tuple(t5xxl_ids.shape)} t5xxl_attention_mask={tuple(t5xxl_attention_mask.shape)}"
             )
         if int(t5xxl_ids.shape[0]) != int(cross_attn.shape[0]):
             raise ValueError(
@@ -228,6 +242,7 @@ def compile_conditions(cond):
             )
         result['model_conds']['t5xxl_ids'] = Condition(t5xxl_ids.to(dtype=torch.long))
         result['model_conds']['t5xxl_weights'] = Condition(t5xxl_weights)
+        result['model_conds']['t5xxl_attention_mask'] = Condition(t5xxl_attention_mask.to(dtype=torch.long))
 
     if 'image_latents' in cond and cond['image_latents'] is not None:
         image_latents = cond['image_latents']

@@ -8,6 +8,7 @@ Key files:
 - `apps/backend/runtime/state_dict/key_mapping.py`: Strict key-style detection + keyspace resolver core (fail loud; collision/ambiguity checks).
 - `apps/backend/runtime/state_dict/keymap_gemma3_text_encoder.py`: Gemma3 text-only GGUF key-style resolver (llama.cpp GGUF or native HF text-backbone layout → `Gemma3TextModel` lookup space).
 - `apps/backend/runtime/state_dict/keymap_clip_vision.py`: CLIP vision image-encoder key-style resolver (HF `vision_model.*`, wrapped `image_encoder.vision_model.*`, or explicit OpenCLIP `visual.*` → canonical HF `CLIPVisionModelWithProjection` lookup space).
+- `apps/backend/runtime/state_dict/keymap_anima_transformer.py`: Anima transformer key-style resolver (raw `net.*` or already-canonical runtime keys → canonical Anima runtime lookup space).
 - `apps/backend/runtime/state_dict/keymap_llama_gguf.py`: llama.cpp-style GGUF tensor-name resolver for text models (HF key layout).
 - `apps/backend/runtime/state_dict/keymap_qwen_text_encoder.py`: Qwen text-encoder key-style resolver (native HF backbone or known wrapper/container surfaces -> canonical `model.*` lookup space; optional aux heads handled explicitly by policy).
 - `apps/backend/runtime/state_dict/keymap_sdxl_clip.py`: SDXL base text-encoder key mapping (CLIP-L/CLIP-G → Codex IntegratedCLIP layout).
@@ -51,5 +52,6 @@ Notes:
 - 2026-03-06: Added family-scoped Flux / FLUX.2 / Z Image GGUF keyspace resolvers so native/source checkpoints can be interpreted through lazy lookup views (including fused/unfused tensor conventions) without materializing remapped state dicts.
 - 2026-03-12: Added strict Gemma3 text-only GGUF keyspace resolution in `keymap_gemma3_text_encoder.py` for the LTX2 Gemma3 external loader path; it accepts llama.cpp GGUF text keys or already-native `Gemma3TextModel` keys and exposes only a lookup view.
 - 2026-03-21: `keymap_gemma3_text_encoder.py` now rejects documented wrapper-prefix rewrite inputs (`model.`, `language_model.`, `base_text_encoder.`) until the source layout is modeled explicitly; the strict lookup view remains canonical GGUF-or-native-HF only.
+- 2026-03-31: Added `keymap_anima_transformer.py` as the explicit raw `net.*`/canonical Anima transformer keyspace owner; parser and loader now keep stored core keys native and resolve them through lazy lookup views instead of parser-side prefix stripping or eager normalization.
 
-Last Review: 2026-03-29
+Last Review: 2026-03-31

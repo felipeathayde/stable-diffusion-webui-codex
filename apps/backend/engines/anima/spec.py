@@ -15,7 +15,7 @@ Sets Anima predictor defaults, including SIMPLE schedule mode selection for tail
 Symbols (top-level; keep in sync; no ghosts):
 - `_torch_dtype_label` (function): Convert canonical torch dtypes into runtime metadata labels (`fp16`/`bf16`/`fp32`).
 - `_predictor` (function): Build Anima predictor defaults (discrete-flow + tail-downsample SIMPLE schedule mode).
-- `_load_external_text_encoder` (function): Load and validate Anima Qwen3-0.6B text encoder from external safetensors.
+- `_load_external_text_encoder` (function): Load and validate an external Anima Qwen3-0.6B text-encoder asset.
 - `_load_external_vae` (function): Load and validate Anima WAN VAE from external safetensors.
 - `_require_external_asset_path` (function): Require non-empty external asset option values.
 - `_require_existing_external_asset_path` (function): Require existing external asset files on disk.
@@ -122,16 +122,16 @@ def _predictor(*, spec: AnimaEngineSpec) -> PredictionDiscreteFlow:
     )
 
 
-def _load_external_text_encoder(*, tenc_path: str, torch_dtype: torch.dtype) -> object:
+def _load_external_text_encoder(*, tenc_path: str, torch_dtype: torch.dtype, device: torch.device) -> object:
     from apps.backend.runtime.families.anima.text_encoder import load_anima_qwen3_06b_text_encoder
 
-    return load_anima_qwen3_06b_text_encoder(tenc_path, torch_dtype=torch_dtype)
+    return load_anima_qwen3_06b_text_encoder(tenc_path, torch_dtype=torch_dtype, device=device)
 
 
-def _load_external_vae(*, vae_path: str, torch_dtype: torch.dtype) -> object:
+def _load_external_vae(*, vae_path: str, torch_dtype: torch.dtype, device: torch.device) -> object:
     from apps.backend.runtime.families.anima.wan_vae import load_wan_vae_from_safetensors
 
-    return load_wan_vae_from_safetensors(vae_path, torch_dtype=torch_dtype)
+    return load_wan_vae_from_safetensors(vae_path, torch_dtype=torch_dtype, device=device)
 
 
 def _require_external_asset_path(*, opts: Mapping[str, Any], key: str, label: str) -> str:
@@ -316,7 +316,7 @@ def assemble_anima_runtime(
     vae_path = _require_external_asset_path(opts=opts, key="vae_path", label="VAE")
     tenc_path = _require_external_asset_path(opts=opts, key="tenc_path", label="text encoder")
 
-    # Core transformer component is provided as a parser-stripped state dict (`net.` removed).
+    # Core transformer component is provided in native checkpoint keyspace (`net.*`) and resolved lazily by the loader.
     transformer_sd = codex_components.get("transformer")
     if transformer_sd is None:
         raise RuntimeError("Anima bundle missing required component 'transformer' (state dict).")
@@ -355,9 +355,27 @@ def assemble_anima_runtime(
         config=estimated_config,
     )
 
+    te_load_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
+    te_offload_device = memory_management.manager.get_offload_device(DeviceRole.TEXT_ENCODER)
     te_storage = memory_management.manager.dtype_for_role(DeviceRole.TEXT_ENCODER)
     te_compute = memory_management.manager.compute_dtype_for_role(DeviceRole.TEXT_ENCODER, storage_dtype=te_storage)
-    qwen_text_encoder = _load_external_text_encoder(tenc_path=tenc_path, torch_dtype=te_storage)
+    qwen_text_encoder = _load_external_text_encoder(
+        tenc_path=tenc_path,
+        torch_dtype=te_storage,
+        device=te_load_device,
+    )
+    from apps.backend.runtime.families.anima.text_encoder import (
+        AnimaQwenTextEncoder,
+        AnimaQwenTextProcessingEngine,
+        load_anima_t5_tokenizer,
+        resolve_anima_qwen_max_length,
+    )
+
+    if not isinstance(qwen_text_encoder, AnimaQwenTextEncoder):
+        raise RuntimeError(
+            "Anima external text encoder loader returned invalid wrapper type: "
+            f"{type(qwen_text_encoder).__name__}."
+        )
     qwen_model = getattr(qwen_text_encoder, "model", None)
     if not isinstance(qwen_model, torch.nn.Module):
         raise RuntimeError(
@@ -365,9 +383,10 @@ def assemble_anima_runtime(
             f"{type(qwen_model).__name__}."
         )
 
+    vae_load_device = memory_management.manager.get_device(DeviceRole.VAE)
     vae_storage = memory_management.manager.dtype_for_role(DeviceRole.VAE)
     vae_compute = memory_management.manager.compute_dtype_for_role(DeviceRole.VAE, storage_dtype=vae_storage)
-    vae_model = _load_external_vae(vae_path=vae_path, torch_dtype=vae_storage)
+    vae_model = _load_external_vae(vae_path=vae_path, torch_dtype=vae_storage, device=vae_load_device)
     if not isinstance(vae_model, torch.nn.Module):
         raise RuntimeError(
             "Anima external VAE loader returned invalid model type: "
@@ -378,15 +397,6 @@ def assemble_anima_runtime(
     vae = VAE(model=vae_model, family=ModelFamily.ANIMA)
 
     # Text encoder patcher for memory management integration.
-    te_load_device = memory_management.manager.get_device(DeviceRole.TEXT_ENCODER)
-    te_offload_device = memory_management.manager.get_offload_device(DeviceRole.TEXT_ENCODER)
-    from apps.backend.runtime.families.anima.text_encoder import (
-        AnimaQwenTextEncoder,
-        AnimaQwenTextProcessingEngine,
-        load_anima_t5_tokenizer,
-    )
-
-    text_encoder = AnimaQwenTextEncoder(model=qwen_model)
     qwen = ModelPatcher(
         qwen_model,
         load_device=te_load_device,
@@ -394,11 +404,8 @@ def assemble_anima_runtime(
     )
 
     # Text pipelines: Qwen embeddings + offline T5 tokenizer.
-    qwen_max_length = int(os.getenv("CODEX_ANIMA_QWEN_MAX_LENGTH", "512") or 512)
-    if qwen_max_length <= 0:
-        raise ValueError("CODEX_ANIMA_QWEN_MAX_LENGTH must be > 0")
-
-    text_engine = AnimaQwenTextProcessingEngine(text_encoder, max_length=qwen_max_length)
+    qwen_max_length = resolve_anima_qwen_max_length()
+    text_engine = AnimaQwenTextProcessingEngine(qwen_text_encoder, max_length=qwen_max_length)
     t5_tokenizer = load_anima_t5_tokenizer()
     text_pipelines = AnimaTextPipelines(qwen3_text=text_engine, t5_tokenizer=t5_tokenizer)
 

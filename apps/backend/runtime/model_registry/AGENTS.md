@@ -1,6 +1,6 @@
 # Model Registry (Work in Progress)
 Date: 2025-10-28
-Last Review: 2026-03-28
+Last Review: 2026-03-31
 Status: Draft
 
 ## Purpose
@@ -21,7 +21,7 @@ Status: Draft
 - 2026-01-08: Added `flow_shift.py` as the canonical flow-shift resolver from diffusers `scheduler_config.json` (fixed + dynamic) and removed hard-coded `flow_shift` values from family runtime specs where the value is not a true family invariant (Flux/WAN22).
 - 2026-01-08: Refreshed file header blocks for `capabilities.py` and `flow_shift.py` to keep the Symbols lists in sync (doc-only change).
 - 2026-01-18: Semantic engine surface for `chroma` now declares `supports_img2img=true` to match the registered `flux1_chroma` engine task surface.
-- 2026-02-06: `SemanticEngine.ANIMA` capability surface now exposes `supports_txt2img=true` and `supports_img2img=true` after conditioning payload port (`crossattn` + `t5xxl_ids/t5xxl_weights`; no synthesized pooled `vector`) and compile/sampler pass-through validation.
+- 2026-02-06: `SemanticEngine.ANIMA` capability surface now exposes `supports_txt2img=true` and `supports_img2img=true` after conditioning payload port (`crossattn` + `t5xxl_ids/t5xxl_weights/t5xxl_attention_mask`; no synthesized pooled `vector`) and compile/sampler pass-through validation.
 - 2026-02-07: `SemanticEngine.ANIMA` sampler surface narrowed to native-supported entries (`euler`, `euler a`, `dpm++ 2m`) with default `euler`.
 - 2026-02-08: `SemanticEngine.ANIMA` re-enabled native `er sde` rollout (Anima-only release scope) while keeping default sampler `euler`.
 - 2026-02-16: WAN22 family bucket was split into explicit families (`WAN22_5B`, `WAN22_14B`, `WAN22_ANIMATE`); detector family assignment now follows model type (`ti2v` -> 5B, `animate` -> WAN22_ANIMATE, others -> 14B).

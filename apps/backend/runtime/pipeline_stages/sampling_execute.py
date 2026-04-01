@@ -214,6 +214,7 @@ def execute_sampling_result(
         preview_interval = int(preview_interval_steps(default=0))
         debug_factors = debug_preview_factors_enabled()
         preview_emitted = False
+        progress_owner_token = str(getattr(processing, "_codex_progress_owner_token", "") or "")
 
         def _preview_cb(denoised_latent: torch.Tensor, step: int, total: int | None) -> None:
             nonlocal preview_emitted
@@ -233,7 +234,11 @@ def execute_sampling_result(
             preview = decode_preview_image(processing, denoised_latent, method=preview_method)
             if preview is None:
                 return
-            backend_state.set_current_image(preview, sampling_step=int(step))
+            backend_state.set_current_image(
+                preview,
+                sampling_step=int(step),
+                owner_token=progress_owner_token,
+            )
             preview_emitted = True
             if debug_factors:
                 maybe_log_preview_factors(processing, denoised_latent, step=int(step), total=int(total or 0))

@@ -166,16 +166,21 @@ def _unwrap_encode_output(output, *, generator: torch.Generator | None = None):
 
 
 def _report_vae_progress(*, phase: str, block_index: int, total_blocks: int) -> None:
-    try:
-        from apps.backend.core.state import state as backend_state
+    from apps.backend.core.state import state as backend_state
 
-        backend_state.update_vae_progress(
-            phase=phase,
-            block_index=int(block_index),
-            total_blocks=int(total_blocks),
-        )
-    except Exception:
-        logger.debug("VAE progress update failed for phase=%s", phase, exc_info=True)
+    owner_token = backend_state.current_thread_progress_owner_token().strip()
+    if not owner_token:
+        raise RuntimeError("VAE progress update requires a seeded progress owner token.")
+    sampling_step, sampling_total, _sampling_block_index, _sampling_block_total = backend_state.current_thread_sampling_context()
+
+    backend_state.update_vae_progress(
+        phase=phase,
+        block_index=int(block_index),
+        total_blocks=int(total_blocks),
+        owner_token=owner_token,
+        sampling_step=int(sampling_step),
+        sampling_total=sampling_total,
+    )
 
 
 class _NormalizingFirstStage:

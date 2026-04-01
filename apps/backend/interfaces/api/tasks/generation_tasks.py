@@ -509,6 +509,7 @@ def _execute_prepared_image_request(
 
     cancelled_immediate = False
     result: dict[str, Any] | None = None
+    expected_progress_owner_token = f"task:{task_id}"
     backend_state.clear_progress_snapshot()
     with preview_cfg.runtime_overrides(), smart_runtime_overrides(
         smart_offload=smart_offload,
@@ -541,7 +542,12 @@ def _execute_prepared_image_request(
                     evt["message"] = str(ev.message)
                 if ev.data:
                     evt["data"] = dict(ev.data)
-                live_preview.maybe_attach_to_progress_event(evt, entry, config=preview_cfg)
+                live_preview.maybe_attach_to_progress_event(
+                    evt,
+                    entry,
+                    config=preview_cfg,
+                    expected_owner_token=expected_progress_owner_token,
+                )
                 push(evt)
                 emit_contract_trace(
                     task_id=task_id,

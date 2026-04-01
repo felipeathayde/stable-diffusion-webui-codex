@@ -15,7 +15,8 @@ while emitting timeline/diagnostic hooks (and optional global profiling sections
 and dedicated `uni-pc` / `uni-pc bh2`
 multistep predictor/corrector handling, strict runtime option validation (`solver_type`, `max_stage`, `eta`, `s_noise`) and optional guidance policy wiring
 (APG/rescale/trunc/renorm), emits explicit runtime telemetry for console block-progress activation state, and owns the
-shared img2img denoise-step split between proportional base execution and internal fixed-step hires continuations.
+shared img2img denoise-step split between proportional base execution and internal fixed-step hires continuations while
+reaffirming the processing-owned raw progress-owner token when sampling starts.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_SamplingCancelled` (exception): Raised when an in-flight sampling run is cancelled (checked via backend state).
@@ -1818,7 +1819,12 @@ class CodexSampler:
                         )
                     else:
                         denoiser.model_options.pop(_GUIDANCE_APG_MOMENTUM_BUFFER_KEY, None)
-                backend_state.start(job_count=1, sampling_steps=reported_total_steps)
+                progress_owner_token = str(getattr(processing, "_codex_progress_owner_token", "") or "")
+                backend_state.start(
+                    job_count=1,
+                    sampling_steps=reported_total_steps,
+                    progress_owner_token=progress_owner_token,
+                )
                 state_started = True
                 transformer_options = denoiser.model_options.get("transformer_options", None)
                 if not isinstance(transformer_options, dict):
@@ -1844,6 +1850,7 @@ class CodexSampler:
                     backend_state.update_sampling_block(
                         block_index=normalized_index,
                         total_blocks=normalized_total,
+                        owner_token=progress_owner_token,
                     )
                     if block_progress_controller is not None:
                         block_progress_controller.update(
@@ -1852,7 +1859,7 @@ class CodexSampler:
                         )
 
                 transformer_options[BLOCK_PROGRESS_CALLBACK_KEY] = _on_block_progress
-                backend_state.reset_sampling_blocks()
+                backend_state.reset_sampling_blocks(owner_token=progress_owner_token)
 
                 strict = True
                 import time as _time
@@ -2615,9 +2622,10 @@ class CodexSampler:
                             max(1, min(current_step, reported_total_steps))
                             if reported_total_steps is not None
                             else max(1, current_step)
-                        )
+                        ),
+                        owner_token=progress_owner_token,
                     )
-                    backend_state.reset_sampling_blocks()
+                    backend_state.reset_sampling_blocks(owner_token=progress_owner_token)
                     profiler.step()
                     return step_start_time
 
@@ -3293,7 +3301,7 @@ class CodexSampler:
                             else:
                                 x, t0 = _run_native_restart(x, start_time=t0)
                             break
-                        backend_state.reset_sampling_blocks()
+                        backend_state.reset_sampling_blocks(owner_token=progress_owner_token)
                         if guidance_policy is not None:
                             denoiser.model_options[_GUIDANCE_STEP_INDEX_KEY] = history_step_index
                         with profiler.section(f"sampling.step/{history_step_index + 1}"):
@@ -5327,8 +5335,8 @@ class CodexSampler:
                                 )
                                 t0 = _time.perf_counter()
 
-                            backend_state.tick(sampling_step=current_step)
-                            backend_state.reset_sampling_blocks()
+                            backend_state.tick(sampling_step=current_step, owner_token=progress_owner_token)
+                            backend_state.reset_sampling_blocks(owner_token=progress_owner_token)
                             if (
                                 capture_boundary_state_at_step is not None
                                 and current_step == int(capture_boundary_state_at_step)

@@ -11,7 +11,8 @@ Implements the profile store used by the TUI/GUI launchers to load/save settings
 expose a mapping-like interface for editing environment variables with per-area routing and migrations.
 Defines defaults for performance-related env keys (GGUF dequant-cache/LoRA knobs, CFG batching, profiling flags) and task/runtime safety knobs (single-flight,
 task cancel mode, task SSE buffer caps, safeweights), plus attention/bootstrap device policy keys (`CODEX_MAIN_DEVICE`, `CODEX_MOUNT_DEVICE`, `CODEX_OFFLOAD_DEVICE`) with CPU offload default, so runs are reproducible.
-Also stores API-only manual env overlay settings (`manual_api_env_enabled`, `manual_api_env_text`) and validates overlay text parsing for fail-loud startup.
+Also stores API-only manual env overlay settings (`manual_api_env_enabled`, `manual_api_env_text`) plus launcher-owned frontend dev boot policy, and
+validates overlay text parsing for fail-loud startup.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_default_area_env` (function): Builds default per-area env maps (debug/log/profiling flags + device defaults + GGUF dequant-cache/LoRA runtime knobs; default offload target is CPU).
@@ -25,7 +26,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `normalize_mode_profile` (function): Strict parser/validator for launcher app mode profile values.
 - `DEFAULT_MANUAL_API_ENV_TEXT` (constant): Suggested manual API env overlay text prefilled in launcher metadata.
 - `parse_manual_api_env_text` (function): Parses manual API env text (`KEY=VALUE` per line) with strict, line-numbered validation.
-- `LauncherMeta` (dataclass): Persisted launcher UI metadata (active model, tab index, terminal preference, sdpa policy, manual API env overlay).
+- `LauncherMeta` (dataclass): Persisted launcher UI metadata (active model, tab index, terminal preference, sdpa policy, manual API env overlay,
+  frontend dev boot policy).
 - `_EnvironmentView` (class): `MutableMapping` view that routes env reads/writes into the underlying profile store (areas/models).
 - `LauncherProfileStore` (dataclass): Main profile store; loads/saves meta/env maps, resolves key routing, and provides lookup helpers
   (contains nested helpers for container resolution and file IO).
@@ -192,6 +194,7 @@ class LauncherMeta:
     window_geometry: str = ""
     show_advanced_controls: bool = False
     app_mode_profile: str = DEFAULT_LAUNCHER_MODE_PROFILE
+    frontend_dev_typecheck: bool = False
     manual_api_env_enabled: bool = False
     manual_api_env_text: str = DEFAULT_MANUAL_API_ENV_TEXT
 
@@ -355,6 +358,8 @@ class LauncherProfileStore:
             changed = self._ensure_consistency()
             if changed:
                 LOGGER.warning("Launcher profile normalized at save; writing canonical env maps to %s", self.root)
+            if bool(getattr(self.meta, "manual_api_env_enabled", False)):
+                self.build_manual_api_env_overlay()
             _write_meta(self.root, self.meta)
             _write_env_maps(self.root / "areas", self.areas)
             _write_env_maps(self.root / "models", self.models)
@@ -593,6 +598,7 @@ def _load_meta(root: Path) -> LauncherMeta:
         window_geometry=str(data.get("window_geometry", "") or ""),
         show_advanced_controls=bool(data.get("show_advanced_controls", False)),
         app_mode_profile=app_mode_profile,
+        frontend_dev_typecheck=bool(data.get("frontend_dev_typecheck", False)),
         manual_api_env_enabled=bool(data.get("manual_api_env_enabled", False)),
         manual_api_env_text=str(data.get("manual_api_env_text", DEFAULT_MANUAL_API_ENV_TEXT) or ""),
     )
@@ -610,6 +616,7 @@ def _write_meta(root: Path, meta: LauncherMeta) -> None:
             str(getattr(meta, "app_mode_profile", DEFAULT_LAUNCHER_MODE_PROFILE) or DEFAULT_LAUNCHER_MODE_PROFILE),
             source="launcher meta app_mode_profile",
         ),
+        "frontend_dev_typecheck": bool(getattr(meta, "frontend_dev_typecheck", False)),
         "manual_api_env_enabled": bool(getattr(meta, "manual_api_env_enabled", False)),
         "manual_api_env_text": str(getattr(meta, "manual_api_env_text", DEFAULT_MANUAL_API_ENV_TEXT) or ""),
     }

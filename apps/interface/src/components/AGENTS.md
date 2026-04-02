@@ -1,7 +1,7 @@
 <!-- tags: frontend, components, prompt, hires, refiner -->
 # apps/interface/src/components Overview
 Date: 2025-12-06
-Last Review: 2026-03-31
+Last Review: 2026-04-01
 Status: Active
 
 ## Purpose
@@ -9,7 +9,7 @@ Status: Active
 
 ## Notes
 - 2026-03-21: `Img2ImgBasicParametersCard.vue` now accepts engine-scoped `resizeModeOptions`; when the active engine only supports truthful pixel-space resize modes (ZImage), the card hides the unsupported upscaler selector instead of rendering a dead selector, and ZImage inpaint hides the resize block entirely because the masked runtime path does not own a separate resize-mode contract.
-- 2026-03-31: `SupirModeCard.vue` stays presentational-only and tranche-1 truthful: it renders only `enabled`, variant, sampler, control/restoration scales, and color-fix, while readiness/blocking state and stale-selection handling remain view-owned in `ImageModelTab.vue`.
+- 2026-04-01: Native SDXL SUPIR UI is split across three owners: `QuickSettingsBar.vue` owns the main SUPIR toggle beside `IMG2IMG` / `INPAINT`, `Img2ImgBasicParametersCard.vue` owns only the SUPIR sampler + locked-scheduler row inside Basic Parameters, and `SupirModeCard.vue` owns the remaining SUPIR-specific controls (`variant`, control/restoration scales, color-fix, plus the bounded advanced `Restore End (Sigma)` knob). Shared readiness/blocking truth comes from `src/composables/useSupirDiagnostics.ts`.
 - 2026-03-21: `VideoSettingsCard.vue` is now family-neutral by default (`1..1000`, step `1`, no baked-in frame rule); WAN/LTX workspaces must pass their own frame-step/rule contract explicitly.
 - 2026-03-20: `QuickSettingsBar.vue` now hides image asset-contract-derived selector hints when checkpoint inventory metadata lacks a valid `core_only` boolean, avoiding stale text-encoder/VAE contract display from broken inventory rows.
 - Components should be presentational and rely on Pinia stores or props for state.
@@ -17,7 +17,7 @@ Status: Active
 - Prompt parsing/serialization lives in `prompt/PromptToken.ts`; ensure new prompt widgets pass through that module, then run `cd apps/interface && npm run typecheck` and manual prompt round-trip validation in the UI.
 - Generation + hires + refiner controls live in `GenerationSettingsCard.vue`, `HiresSettingsCard.vue`, `SwapStageSettingsCard.vue`, and `RefinerSettingsCard.vue`, following shared `gen-card` organization with component-specific row/grid arrangements.
 - 2026-03-25: `SwapStageSettingsCard.vue` owns the generic top-level first-pass `swap_model` UI. `RefinerSettingsCard.vue` stays SDXL-refiner-only; do not reuse its wording to represent generic swap stages again.
-- Model/sampler/scheduler dropdowns vivem em `ModelSelector.vue`, `SamplerSelector.vue` e `SchedulerSelector.vue`; views devem reutilizar esses componentes em vez de construir selects ad-hoc. Presets/estilos são tratados hoje pelas próprias views (SDXL/FLUX.1) sem um componente dedicado de selector.
+- Model/sampler/scheduler dropdowns vivem em `ModelSelector.vue`, `SamplerSelector.vue` e `SchedulerSelector.vue`; views devem reutilizar esses componentes em vez de construir selects ad-hoc. Exceção atual e bounded: `Img2ImgBasicParametersCard.vue` owns only the SUPIR-specific sampler + locked-scheduler row because that surface needs a backend-derived read-only scheduler, while `SupirModeCard.vue` owns the remaining SUPIR-specific controls and non-SUPIR sampling still uses the generic selector components. Presets/estilos são tratados hoje pelas próprias views (SDXL/FLUX.1) sem um componente dedicado de selector.
 - `QuickSettingsBar.vue` renders per-tab selectors in the main header row; it includes a nested, collapsible Advanced area (Smart toggles + Overrides) with a left-side handle. In `/models/:tabId`, the active family comes from the tab type; outside model tabs, it falls back to `uiBlocks.semanticEngine` when available (otherwise `sd15`).
 - 2026-03-16: `QuickSettingsBar.vue` keeps LTX as its own video-family branch in the shared header lane. LTX selectors remain per-tab (`tab.params.checkpoint`, `tab.params.vae`, `tab.params.textEncoder`), use `ltx2_*` roots for filtering, keep the text-encoder selector visible, and own the LTX `TXT2VID/IMG2VID` mode toggle in the top row instead of the workspace body. On any `/models/:tabId` route, the bar stays in a non-family placeholder state until the hydrated tab object exists, so no family branch can fall back to global selector writes during route hydration; stale route ids switch that placeholder to explicit not-found, and tab-load failures switch it to an explicit load-failure state instead of fake loading.
 - 2026-01-18: `QuickSettingsBar.vue` now supports the `chroma` model tab type (mapped to backend engine id `flux1_chroma`) and renders a dedicated `QuickSettingsChroma.vue` selector row.

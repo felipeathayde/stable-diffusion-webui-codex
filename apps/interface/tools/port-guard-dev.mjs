@@ -58,6 +58,7 @@ function pidFilePath(port) {
 
 function writePidFile(port) {
   const file = pidFilePath(port)
+  const launcherUiToken = String(process.env.CODEX_LAUNCHER_UI_INSTANCE_TOKEN || '').trim()
   const payload = {
     service: 'ui',
     pid: process.pid,
@@ -68,6 +69,7 @@ function writePidFile(port) {
     wsl: isWsl(),
     cwd: process.cwd(),
   }
+  if (launcherUiToken) payload.launcher_ui_token = launcherUiToken
   try {
     fs.writeFileSync(file, JSON.stringify(payload, null, 2), 'utf-8')
   } catch (_) {

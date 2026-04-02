@@ -2,7 +2,7 @@
 
 # apps/backend/runtime/families/supir Overview
 Date: 2026-02-02
-Last Review: 2026-03-31
+Last Review: 2026-04-01
 Status: In progress
 
 ## Purpose
@@ -25,3 +25,4 @@ Status: In progress
 - Default OFF: VAE cache, VAE tiling, diffusion tiling (guardrails required when enabled).
 - Keep router/runtime imports **import-light**: torch-heavy work must be inside functions.
 - 2026-03-31: `/api/supir/models` is diagnostics-only; live SUPIR generation is owned by canonical SDXL `img2img.py`, not a standalone `/api/supir/enhance` route/task.
+- 2026-04-01: the public/native SUPIR restore surface is currently bounded to `restoreCfgSTmin`; do not expose or accept structure-only / LPF knobs again until `runtime.py` owns a truthful non-placeholder execution path for them.

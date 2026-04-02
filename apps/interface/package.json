@@ -6,7 +6,9 @@
   "scripts": {
     "verify:css-contracts": "node tools/verify-css-contracts.mjs",
     "typecheck": "vue-tsc -p tsconfig.json --noEmit",
-    "dev": "npm run typecheck && node tools/port-guard-dev.mjs",
+    "dev:fast": "node tools/port-guard-dev.mjs",
+    "dev:typecheck": "npm run typecheck && node tools/port-guard-dev.mjs",
+    "dev": "npm run dev:fast",
     "build": "vite build",
     "preview": "vite preview --port 8282",
     "verify": "npm run verify:css-contracts && npm run typecheck && npm run build"

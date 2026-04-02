@@ -10,7 +10,7 @@ Purpose: Runtime settings tab for the Tk launcher.
 Edits bootstrap-critical main-device defaults and global runtime/task knobs that must exist before the API starts (main/mount/offload devices, GGUF/LoRA, task single-flight,
 task cancel default mode, task SSE buffer caps, upscaler safeweights). Offload device defaults to CPU on missing/invalid values to preserve explicit de-residency semantics.
 Allocator defaults are managed through `PYTORCH_CUDA_ALLOC_CONF` and `CODEX_ENABLE_DEFAULT_PYTORCH_CUDA_ALLOC_CONF`.
-Engine advanced settings also expose the API-only manual env overlay enable toggle (content edited in `Manual Env Vars` tab).
+API-only manual env overlay ownership lives in `Manual Env Vars`, not in runtime selectors.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `RuntimeTab` (class): Runtime settings tab (device defaults + attention mode + LoRA + `PYTORCH_CUDA_ALLOC_CONF`/cuda-malloc toggles).
@@ -94,8 +94,6 @@ class RuntimeTab:
         self._var_pytorch_alloc_conf = tk.StringVar()
         self._var_default_alloc_conf_enabled = tk.BooleanVar()
         self._var_cuda_malloc = tk.BooleanVar()
-        self._var_manual_api_env_enabled = tk.BooleanVar()
-
         self._var_single_flight = tk.BooleanVar()
         self._var_safeweights = tk.BooleanVar()
         self._var_task_cancel_default_mode = tk.StringVar()
@@ -105,20 +103,19 @@ class RuntimeTab:
 
         self._lora_math_combo: ttk.Combobox | None = None
         self._gguf_dequant_cache_combo: ttk.Combobox | None = None
-        self._form_renderers: list[FormRenderer] = []
+        self._form_renderer: FormRenderer | None = None
 
     def build(self, notebook: ttk.Notebook) -> ttk.Frame:
         frame = ttk.Frame(notebook)
         scroll = ScrollableFrame(frame, canvas_bg=self._canvas_bg)
         scroll.pack(fill="both", expand=True, padx=8, pady=8)
         body = scroll.inner
-        body.columnconfigure(0, weight=0)
-        body.columnconfigure(1, weight=1)
+        body.columnconfigure(0, weight=1)
 
         renderer = FormRenderer(body)
         sections = self._sections_for_view()
         renderer.render_sections(0, sections)
-        self._form_renderers = [renderer]
+        self._form_renderer = renderer
 
         gguf_combo = renderer.widget_for("gguf_dequant_cache")
         lora_combo = renderer.widget_for("lora_online_math")
@@ -311,21 +308,6 @@ class RuntimeTab:
                                 "When enabled, launcher forwards backend flag '--cuda-malloc'."
                             ),
                         ),
-                        FormFieldDescriptor(
-                            field_id="manual_env_toggle",
-                            kind=FieldKind.CHECK,
-                            label="Enable Manual Env Vars overlay for API start (requires API restart):",
-                            variable=self._var_manual_api_env_enabled,
-                            on_change=self._on_manual_api_env_toggle_changed,
-                            advanced=True,
-                            help_mode=HelpMode.DIALOG,
-                            help_title="Manual Env Vars overlay",
-                            help_text=(
-                                "When enabled, launcher overlays key/value pairs from the 'Manual Env Vars' tab "
-                                "onto API process environment at start/restart.\n"
-                                "Scope is API-only; UI service env is unchanged."
-                            ),
-                        ),
                     ],
                 ),
             ]
@@ -487,8 +469,6 @@ class RuntimeTab:
             messagebox.showerror("Invalid runtime setting", str(exc))
             runtime_settings_sanitized = True
         self._var_cuda_malloc.set(bool(cuda_malloc_enabled))
-        self._var_manual_api_env_enabled.set(bool(getattr(self._controller.store.meta, "manual_api_env_enabled", False)))
-
         alloc = str(env.get("PYTORCH_CUDA_ALLOC_CONF", "") or "").strip()
         if not alloc and default_alloc_enabled:
             alloc = DEFAULT_PYTORCH_CUDA_ALLOC_CONF
@@ -521,8 +501,8 @@ class RuntimeTab:
         self._apply_advanced_visibility()
 
     def _apply_advanced_visibility(self) -> None:
-        for renderer in self._form_renderers:
-            renderer.set_advanced_visible(self._advanced_visible)
+        if self._form_renderer is not None:
+            self._form_renderer.set_advanced_visible(self._advanced_visible)
 
     def _commit_int_setting(
         self,
@@ -708,10 +688,6 @@ class RuntimeTab:
             CODEX_CUDA_MALLOC_KEY,
             default=False,
         ).set(self._controller.store.env, bool(self._var_cuda_malloc.get()))
-        self._mark_changed()
-
-    def _on_manual_api_env_toggle_changed(self) -> None:
-        self._controller.store.meta.manual_api_env_enabled = bool(self._var_manual_api_env_enabled.get())
         self._mark_changed()
 
     def _sync_task_deps(self, *, mark_changed: bool) -> None:

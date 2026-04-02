@@ -229,17 +229,6 @@ Symbols (top-level; keep in sync; no ghosts):
             >
               INPAINT
             </button>
-            <button
-              v-if="canShowSupirToggle"
-              :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', supirEnabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-              type="button"
-              :aria-pressed="supirEnabled"
-              :disabled="supirToggleDisabled"
-              :title="supirToggleTitle"
-              @click="onSupirModeChange(!supirEnabled)"
-            >
-              SUPIR
-            </button>
           </div>
         </div>
         <div class="quicksettings-group qs-group-models">
@@ -459,6 +448,17 @@ Symbols (top-level; keep in sync; no ghosts):
               @click="onUseMaskChange(!useMask)"
             >
               INPAINT
+            </button>
+            <button
+              v-if="canShowSupirToggle"
+              :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', supirEnabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+              type="button"
+              :aria-pressed="supirEnabled"
+              :disabled="supirToggleDisabled"
+              :title="supirToggleTitle"
+              @click="onSupirModeChange(!supirEnabled)"
+            >
+              SUPIR
             </button>
           </div>
         </div>

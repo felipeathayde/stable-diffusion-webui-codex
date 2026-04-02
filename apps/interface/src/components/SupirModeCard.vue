@@ -13,7 +13,7 @@ sampler/scheduler stay owned by `Img2ImgBasicParametersCard.vue`, and the main S
 
 Symbols (top-level; keep in sync; no ghosts):
 - `SupirModeCard` (component): Dedicated SUPIR mode UI card for truthful SDXL img2img/inpaint surfaces.
-- `DEFAULT_SUPIR_MODE` / `COLOR_FIX_OPTIONS` / `SUPIR_PARAMETER_TOOLTIPS` (constant): Local fallback state plus truthful tooltip/select copy for the public SUPIR surface.
+- `defaultSupirMode` / `COLOR_FIX_OPTIONS` / `SUPIR_PARAMETER_TOOLTIPS` (constant): Canonical fallback state instance plus truthful tooltip/select copy for the public SUPIR surface.
 - `supir` / `variantChoices` / `blockingReason` (const): Normalized props used by the dedicated SUPIR control card.
 - `supirAdvancedDirty` / `supirAdvancedOpen` (const): Derived advanced-surface state used to auto-open the advanced block when non-default runtime knobs are active.
 - `clampFloat` (function): Clamps a numeric value to a `[min,max]` range.
@@ -166,20 +166,10 @@ Symbols (top-level; keep in sync; no ghosts):
 import { computed, ref, watch } from 'vue'
 
 import type { SupirVariantChoice } from '../composables/useSupirDiagnostics'
-import type { SupirModeFormState } from '../stores/model_tabs'
+import { createDefaultSupirModeFormState, type SupirModeFormState } from '../stores/model_tabs'
 import HoverTooltip from './ui/HoverTooltip.vue'
 import SliderField from './ui/SliderField.vue'
 import WanSubHeader from './wan/WanSubHeader.vue'
-
-const DEFAULT_SUPIR_MODE: SupirModeFormState = {
-  enabled: false,
-  variant: 'v0Q',
-  sampler: 'restore_euler_edm_stable',
-  controlScale: 0.8,
-  restorationScale: 4,
-  restoreCfgSTmin: 0.05,
-  colorFix: 'None',
-}
 
 const COLOR_FIX_OPTIONS = [
   { value: 'None', label: 'None' },
@@ -225,19 +215,21 @@ const props = withDefaults(defineProps<{
   blockingReason?: string
 }>(), {
   disabled: false,
-  supir: () => ({ ...DEFAULT_SUPIR_MODE }),
+  supir: () => createDefaultSupirModeFormState(),
   variantChoices: () => [],
   blockingReason: '',
 })
+
+const defaultSupirMode = createDefaultSupirModeFormState()
 
 const emit = defineEmits<{
   (e: 'patch:supir', value: Partial<SupirModeFormState>): void
 }>()
 
-const supir = computed(() => props.supir ?? DEFAULT_SUPIR_MODE)
+const supir = computed(() => props.supir ?? defaultSupirMode)
 const variantChoices = computed(() => (Array.isArray(props.variantChoices) ? props.variantChoices : []))
 const blockingReason = computed(() => String(props.blockingReason || '').trim())
-const supirAdvancedDirty = computed(() => Number(supir.value.restoreCfgSTmin) !== DEFAULT_SUPIR_MODE.restoreCfgSTmin)
+const supirAdvancedDirty = computed(() => Number(supir.value.restoreCfgSTmin) !== defaultSupirMode.restoreCfgSTmin)
 const supirAdvancedOpen = ref(false)
 
 watch(

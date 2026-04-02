@@ -47,6 +47,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `ImageFolderSortBy` (type): Sort key discriminator for ordered directory traversal (`name|size|created_at|modified_at`).
 - `InitSourceFormState` (interface): Img2img initial-image source owner (`img|dir` plus directory traversal settings and crop toggle).
 - `SupirModeFormState` (interface): Native SDXL img2img/inpaint SUPIR owner (`enabled`, variant/sampler selectors, and tranche-1 restore controls).
+- `createDefaultSupirModeFormState` (function): Canonical default factory for the nested SUPIR owner state.
 - `IpAdapterSourceFormState` (interface): IP-Adapter source owner (`img|dir`, uploaded reference image, same-as-init shortcut, and directory traversal settings).
 - `IpAdapterFormState` (interface): IP-Adapter card state owner (enable flag, asset selectors, source owner, and strength range controls).
 - `GuidanceAdvancedParams` (interface): Per-tab advanced guidance policy state (APG/rescale/trunc/renorm).
@@ -323,6 +324,18 @@ export interface SupirModeFormState {
   restorationScale: number
   restoreCfgSTmin: number
   colorFix: SupirColorFixMode
+}
+
+export function createDefaultSupirModeFormState(): SupirModeFormState {
+  return {
+    enabled: false,
+    variant: 'v0Q',
+    sampler: 'restore_euler_edm_stable',
+    controlScale: 0.8,
+    restorationScale: 4,
+    restoreCfgSTmin: 0.05,
+    colorFix: 'None',
+  }
 }
 
 export interface IpAdapterSourceFormState {
@@ -684,15 +697,7 @@ function defaultParams<T extends BaseTabType>(
     startAt: 0,
     endAt: 1,
   }
-  const supirDefaults: SupirModeFormState = {
-    enabled: false,
-    variant: 'v0Q',
-    sampler: 'restore_euler_edm_stable',
-    controlScale: 0.8,
-    restorationScale: 4,
-    restoreCfgSTmin: 0.05,
-    colorFix: 'None',
-  }
+  const supirDefaults = createDefaultSupirModeFormState()
   const imageDefaults: ImageBaseParams = {
     schemaVersion: TAB_PARAMS_SCHEMA_VERSION,
     prompt: '',

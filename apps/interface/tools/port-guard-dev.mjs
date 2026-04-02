@@ -172,9 +172,21 @@ function runVite(port, show, extraArgs = []) {
   const pidFile = writePidFile(port)
   installPidCleanup(pidFile)
   const cwd = interfaceRoot()
-  const viteBin = path.join(cwd, 'node_modules', '.bin', process.platform === 'win32' ? 'vite.cmd' : 'vite')
-  const useShell = process.platform === 'win32'
-  const child = spawn(viteBin, extraArgs, { stdio: 'inherit', env: process.env, shell: useShell, cwd })
+  const viteEntrypoint = path.join(cwd, 'node_modules', 'vite', 'bin', 'vite.js')
+  if (!fs.existsSync(viteEntrypoint)) {
+    console.error(COLOR.red(`[port-guard] Missing Vite entrypoint at ${viteEntrypoint}. Run 'npm install' in apps/interface.`))
+    process.exit(1)
+  }
+  const child = spawn(process.execPath, [viteEntrypoint, ...extraArgs], {
+    stdio: 'inherit',
+    env: process.env,
+    cwd,
+    shell: false,
+  })
+  child.on('error', (err) => {
+    console.error(COLOR.red(`[port-guard] Failed to launch Vite: ${err?.stack || err}`))
+    process.exit(1)
+  })
   child.on('exit', (code) => process.exit(code ?? 0))
 }
 

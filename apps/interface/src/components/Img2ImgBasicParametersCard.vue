@@ -30,7 +30,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `recommendedSamplers` / `recommendedSchedulers` (const): Optional recommendation arrays forwarded into selector components.
 - `patchGuidanceAdvanced` (function): Emits partial updates for nested advanced-guidance state.
 - `toggleGuidanceAdvanced` (function): Toggles Advanced guidance mode and auto-syncs APG/CFG trunc activation flags when supported.
-- `DEFAULT_SUPIR_MODE` / `SUPIR_PARAMETER_TOOLTIPS` (const): Local fallback SUPIR state and bounded tooltip copy for the SUPIR sampler/scheduler row.
+- `defaultSupirMode` / `SUPIR_PARAMETER_TOOLTIPS` (const): Canonical fallback SUPIR state instance and bounded tooltip copy for the SUPIR sampler/scheduler row.
 - `supir` / `supirEnabled` / `supirLockedScheduler` / `supirHasStaleSamplerSelection` (const): Derived SUPIR state used to swap the Basic Parameters sampler surface when SUPIR mode is active and keep stale saved selections visible.
 - `swapWH` (function): Swaps width/height while respecting min/max and step constraints.
 -->
@@ -463,7 +463,7 @@ import type {
   SupirSamplerInfo,
   UpscalerDefinition,
 } from '../api/types'
-import type { GuidanceAdvancedParams, SupirModeFormState } from '../stores/model_tabs'
+import { createDefaultSupirModeFormState, type GuidanceAdvancedParams, type SupirModeFormState } from '../stores/model_tabs'
 
 import NumberStepperInput from './ui/NumberStepperInput.vue'
 import HoverTooltip from './ui/HoverTooltip.vue'
@@ -550,16 +550,6 @@ const ADVANCED_GUIDANCE_TOOLTIPS = {
     'Neutral value: 0.00.',
   ],
 } as const
-
-const DEFAULT_SUPIR_MODE: SupirModeFormState = {
-  enabled: false,
-  variant: 'v0Q',
-  sampler: 'restore_euler_edm_stable',
-  controlScale: 0.8,
-  restorationScale: 4,
-  restoreCfgSTmin: 0.05,
-  colorFix: 'None',
-}
 
 const SUPIR_PARAMETER_TOOLTIPS = {
   sampler: [
@@ -661,7 +651,7 @@ const props = withDefaults(defineProps<{
     renormCfg: 0,
   }),
   guidanceSupport: null,
-  supir: () => ({ ...DEFAULT_SUPIR_MODE }),
+  supir: () => createDefaultSupirModeFormState(),
   supirSamplerChoices: () => [],
   supirSelectedSamplerInfo: null,
   supirBlockingReason: '',
@@ -669,6 +659,8 @@ const props = withDefaults(defineProps<{
   showResizeMode: true,
   dimensionSnapMode: 'nearest',
 })
+
+const defaultSupirMode = createDefaultSupirModeFormState()
 
 const emit = defineEmits<{
   (e: 'update:sampler', value: string): void
@@ -709,7 +701,7 @@ const recommendedSamplers = computed(() => (Array.isArray(props.recommendedSampl
 const recommendedSchedulers = computed(() => (Array.isArray(props.recommendedSchedulers) ? props.recommendedSchedulers : null))
 const guidanceAdvanced = computed(() => props.guidanceAdvanced ?? DEFAULT_GUIDANCE_ADVANCED)
 const guidanceSupport = computed(() => props.guidanceSupport ?? null)
-const supir = computed(() => props.supir ?? DEFAULT_SUPIR_MODE)
+const supir = computed(() => props.supir ?? defaultSupirMode)
 const supirEnabled = computed(() => Boolean(supir.value.enabled))
 const supirSamplerChoices = computed(() => (Array.isArray(props.supirSamplerChoices) ? props.supirSamplerChoices : []))
 const supirSelectedSamplerInfo = computed(() => props.supirSelectedSamplerInfo ?? null)

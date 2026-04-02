@@ -1,7 +1,7 @@
 <!-- tags: frontend, components, prompt, hires, refiner -->
 # apps/interface/src/components Overview
 Date: 2025-12-06
-Last Review: 2026-04-01
+Last Review: 2026-04-02
 Status: Active
 
 ## Purpose
@@ -10,6 +10,7 @@ Status: Active
 ## Notes
 - 2026-03-21: `Img2ImgBasicParametersCard.vue` now accepts engine-scoped `resizeModeOptions`; when the active engine only supports truthful pixel-space resize modes (ZImage), the card hides the unsupported upscaler selector instead of rendering a dead selector, and ZImage inpaint hides the resize block entirely because the masked runtime path does not own a separate resize-mode contract.
 - 2026-04-01: Native SDXL SUPIR UI is split across three owners: `QuickSettingsBar.vue` owns the main SUPIR toggle beside `IMG2IMG` / `INPAINT`, `Img2ImgBasicParametersCard.vue` owns only the SUPIR sampler + locked-scheduler row inside Basic Parameters, and `SupirModeCard.vue` owns the remaining SUPIR-specific controls (`variant`, control/restoration scales, color-fix, plus the bounded advanced `Restore End (Sigma)` knob). Shared readiness/blocking truth comes from `src/composables/useSupirDiagnostics.ts`.
+- 2026-04-02: `Img2ImgBasicParametersCard.vue` and `SupirModeCard.vue` must consume the canonical SUPIR default-state factory from `src/stores/model_tabs.ts`; do not reintroduce component-local SUPIR default owners, because `<script setup>` prop defaults are hoisted and local fallback state will drift or fail compilation.
 - 2026-03-21: `VideoSettingsCard.vue` is now family-neutral by default (`1..1000`, step `1`, no baked-in frame rule); WAN/LTX workspaces must pass their own frame-step/rule contract explicitly.
 - 2026-03-20: `QuickSettingsBar.vue` now hides image asset-contract-derived selector hints when checkpoint inventory metadata lacks a valid `core_only` boolean, avoiding stale text-encoder/VAE contract display from broken inventory rows.
 - Components should be presentational and rely on Pinia stores or props for state.

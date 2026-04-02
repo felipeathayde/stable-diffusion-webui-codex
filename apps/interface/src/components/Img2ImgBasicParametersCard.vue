@@ -9,7 +9,9 @@ Required Notice: see NOTICE
 Purpose: Img2img-focused Basic Parameters card with hires-like structure.
 Renders sampler/scheduler/steps, dimensions, optional resize-mode + upscaler controls, and seed/CFG with optional denoise
 for init-image mode without hires-only prompt/checkpoint swap controls, backend recommendation-aware sampler/scheduler selector grouping, plus optional advanced CFG/APG controls
-gated by per-engine capabilities. The resize-type selector can now receive an engine-scoped truthful option subset and hides the upscaler field when the active engine does not expose an upscaler-backed resize mode.
+gated by per-engine capabilities. When native SDXL SUPIR mode is enabled, the card swaps the generic sampler/scheduler row for the truthful SUPIR sampler surface
+and shows the locked native scheduler derived from backend SUPIR diagnostics, while the SUPIR-specific knobs stay on the dedicated `SupirModeCard.vue`.
+The resize-type selector can now receive an engine-scoped truthful option subset and hides the upscaler field when the active engine does not expose an upscaler-backed resize mode.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Img2ImgBasicParametersCard` (component): Img2img parameters card used when init image mode is active.
@@ -28,6 +30,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `recommendedSamplers` / `recommendedSchedulers` (const): Optional recommendation arrays forwarded into selector components.
 - `patchGuidanceAdvanced` (function): Emits partial updates for nested advanced-guidance state.
 - `toggleGuidanceAdvanced` (function): Toggles Advanced guidance mode and auto-syncs APG/CFG trunc activation flags when supported.
+- `DEFAULT_SUPIR_MODE` / `SUPIR_PARAMETER_TOOLTIPS` (const): Local fallback SUPIR state and bounded tooltip copy for the SUPIR sampler/scheduler row.
+- `supir` / `supirEnabled` / `supirLockedScheduler` / `supirHasStaleSamplerSelection` (const): Derived SUPIR state used to swap the Basic Parameters sampler surface when SUPIR mode is active and keep stale saved selections visible.
 - `swapWH` (function): Swaps width/height while respecting min/max and step constraints.
 -->
 
@@ -36,26 +40,71 @@ Symbols (top-level; keep in sync; no ghosts):
     <WanSubHeader title="Basic Parameters" />
     <div class="gc-stack">
       <div class="gc-row">
-        <SamplerSelector
-          class="gc-col"
-          :samplers="samplers"
-          :recommended-names="recommendedSamplers"
-          :modelValue="sampler"
-          label="Sampler"
-          :allow-empty="false"
-          :disabled="disabled"
-          @update:modelValue="(value) => emit('update:sampler', value)"
-        />
-        <SchedulerSelector
-          class="gc-col"
-          :schedulers="schedulers"
-          :recommended-names="recommendedSchedulers"
-          :modelValue="scheduler"
-          label="Scheduler"
-          :allow-empty="false"
-          :disabled="disabled"
-          @update:modelValue="(value) => emit('update:scheduler', value)"
-        />
+        <template v-if="supirEnabled">
+          <div class="gc-col field">
+            <label class="label-muted">
+              <HoverTooltip
+                class="cdx-slider-field__label-tooltip"
+                title="SUPIR Sampler"
+                :content="SUPIR_PARAMETER_TOOLTIPS.sampler"
+              >
+                <span class="cdx-slider-field__label-trigger">
+                  <span>Sampler</span>
+                  <span class="cdx-slider-field__label-help" aria-hidden="true">?</span>
+                </span>
+              </HoverTooltip>
+            </label>
+            <select
+              class="select-md"
+              :disabled="disabled"
+              :value="supir.sampler"
+              @change="emit('patch:supir', { sampler: ($event.target as HTMLSelectElement).value })"
+            >
+              <option v-if="supirSamplerChoices.length === 0" value="">No SUPIR samplers reported</option>
+              <option v-if="supirHasStaleSamplerSelection" :value="supir.sampler">Invalid selection: {{ supir.sampler }}</option>
+              <option v-for="choice in supirSamplerChoices" :key="choice.id" :value="choice.id">
+                {{ choice.label }}
+              </option>
+            </select>
+          </div>
+          <div class="gc-col field">
+            <label class="label-muted">
+              <HoverTooltip
+                class="cdx-slider-field__label-tooltip"
+                title="SUPIR Scheduler"
+                :content="SUPIR_PARAMETER_TOOLTIPS.scheduler"
+              >
+                <span class="cdx-slider-field__label-trigger">
+                  <span>Scheduler</span>
+                  <span class="cdx-slider-field__label-help" aria-hidden="true">?</span>
+                </span>
+              </HoverTooltip>
+            </label>
+            <input class="ui-input ui-input-sm" type="text" :value="supirLockedScheduler || 'Unavailable'" disabled readonly />
+          </div>
+        </template>
+        <template v-else>
+          <SamplerSelector
+            class="gc-col"
+            :samplers="samplers"
+            :recommended-names="recommendedSamplers"
+            :modelValue="sampler"
+            label="Sampler"
+            :allow-empty="false"
+            :disabled="disabled"
+            @update:modelValue="(value) => emit('update:sampler', value)"
+          />
+          <SchedulerSelector
+            class="gc-col"
+            :schedulers="schedulers"
+            :recommended-names="recommendedSchedulers"
+            :modelValue="scheduler"
+            label="Scheduler"
+            :allow-empty="false"
+            :disabled="disabled"
+            @update:modelValue="(value) => emit('update:scheduler', value)"
+          />
+        </template>
         <SliderField
           class="gc-col gc-col--wide"
           label="Steps"
@@ -70,6 +119,7 @@ Symbols (top-level; keep in sync; no ghosts):
           @update:modelValue="(value) => emit('update:steps', clampInt(value, minSteps, maxSteps))"
         />
       </div>
+      <p v-if="supirEnabled && supirBlockingReason" class="hr-hint">{{ supirBlockingReason }}</p>
 
       <div class="gc-row">
         <SliderField
@@ -406,10 +456,17 @@ Symbols (top-level; keep in sync; no ghosts):
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import type { GuidanceAdvancedCapabilities, SamplerInfo, SchedulerInfo, UpscalerDefinition } from '../api/types'
-import type { GuidanceAdvancedParams } from '../stores/model_tabs'
+import type {
+  GuidanceAdvancedCapabilities,
+  SamplerInfo,
+  SchedulerInfo,
+  SupirSamplerInfo,
+  UpscalerDefinition,
+} from '../api/types'
+import type { GuidanceAdvancedParams, SupirModeFormState } from '../stores/model_tabs'
 
 import NumberStepperInput from './ui/NumberStepperInput.vue'
+import HoverTooltip from './ui/HoverTooltip.vue'
 import SliderField from './ui/SliderField.vue'
 import SamplerSelector from './SamplerSelector.vue'
 import SchedulerSelector from './SchedulerSelector.vue'
@@ -494,6 +551,29 @@ const ADVANCED_GUIDANCE_TOOLTIPS = {
   ],
 } as const
 
+const DEFAULT_SUPIR_MODE: SupirModeFormState = {
+  enabled: false,
+  variant: 'v0Q',
+  sampler: 'restore_euler_edm_stable',
+  controlScale: 0.8,
+  restorationScale: 4,
+  restoreCfgSTmin: 0.05,
+  colorFix: 'None',
+}
+
+const SUPIR_PARAMETER_TOOLTIPS = {
+  sampler: [
+    'Selects the repo-owned SUPIR restore sampler surface.',
+    'The current public inventory is the stable sampler set reported by `/api/supir/models`.',
+    'The locked scheduler shown below comes from backend diagnostics for the selected SUPIR sampler.',
+  ],
+  scheduler: [
+    'Read-only.',
+    'Native SUPIR mode maps each public SUPIR sampler to one backend-owned SDXL sampler/scheduler tuple.',
+    'In the current stable public surface, every exposed SUPIR sampler maps to the `karras` scheduler.',
+  ],
+} as const
+
 const props = withDefaults(defineProps<{
   samplers: SamplerInfo[]
   schedulers: SchedulerInfo[]
@@ -538,6 +618,10 @@ const props = withDefaults(defineProps<{
   maxClipSkip?: number
   guidanceAdvanced?: GuidanceAdvancedParams
   guidanceSupport?: GuidanceAdvancedCapabilities | null
+  supir?: SupirModeFormState
+  supirSamplerChoices?: readonly SupirSamplerInfo[]
+  supirSelectedSamplerInfo?: SupirSamplerInfo | null
+  supirBlockingReason?: string
 }>(), {
   disabled: false,
   upscalers: () => [],
@@ -577,6 +661,10 @@ const props = withDefaults(defineProps<{
     renormCfg: 0,
   }),
   guidanceSupport: null,
+  supir: () => ({ ...DEFAULT_SUPIR_MODE }),
+  supirSamplerChoices: () => [],
+  supirSelectedSamplerInfo: null,
+  supirBlockingReason: '',
   resizeModeOptions: () => [...IMG2IMG_RESIZE_MODE_OPTIONS],
   showResizeMode: true,
   dimensionSnapMode: 'nearest',
@@ -595,6 +683,7 @@ const emit = defineEmits<{
   (e: 'update:resizeMode', value: Img2ImgResizeMode): void
   (e: 'update:clipSkip', value: number): void
   (e: 'update:guidanceAdvanced', patch: Partial<GuidanceAdvancedParams>): void
+  (e: 'patch:supir', patch: Partial<SupirModeFormState>): void
   (e: 'random-seed'): void
   (e: 'reuse-seed'): void
   (e: 'sync-init-image-dims'): void
@@ -620,7 +709,18 @@ const recommendedSamplers = computed(() => (Array.isArray(props.recommendedSampl
 const recommendedSchedulers = computed(() => (Array.isArray(props.recommendedSchedulers) ? props.recommendedSchedulers : null))
 const guidanceAdvanced = computed(() => props.guidanceAdvanced ?? DEFAULT_GUIDANCE_ADVANCED)
 const guidanceSupport = computed(() => props.guidanceSupport ?? null)
+const supir = computed(() => props.supir ?? DEFAULT_SUPIR_MODE)
+const supirEnabled = computed(() => Boolean(supir.value.enabled))
+const supirSamplerChoices = computed(() => (Array.isArray(props.supirSamplerChoices) ? props.supirSamplerChoices : []))
+const supirSelectedSamplerInfo = computed(() => props.supirSelectedSamplerInfo ?? null)
+const supirBlockingReason = computed(() => String(props.supirBlockingReason || '').trim())
+const supirLockedScheduler = computed(() => String(supirSelectedSamplerInfo.value?.native_scheduler || '').trim())
+const supirHasStaleSamplerSelection = computed(() => (
+  Boolean(String(supir.value.sampler || '').trim())
+  && supirSelectedSamplerInfo.value === null
+))
 const showGuidanceAdvancedToggle = computed(() => {
+  if (supirEnabled.value) return false
   const support = guidanceSupport.value
   if (!support) return false
   return Object.values(support).some((flag) => flag === true)

@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: SUPIR diagnostics API routes.
 Exposes only inventory/readiness diagnostics for native SUPIR mode:
 - SUPIR weights diagnostics (`GET /api/supir/models`)
+- stable-only public sampler rows with backend-owned native sampler/scheduler metadata
 
 Live SUPIR generation is owned by canonical SDXL `img2img` / inpaint and not by a standalone `/api/supir/enhance` route.
 
@@ -24,7 +25,7 @@ from typing import Any, Dict
 from fastapi import APIRouter
 
 from apps.backend.infra.config.paths import get_paths_for
-from apps.backend.runtime.families.supir.samplers.registry import iter_supir_sampler_labels
+from apps.backend.runtime.families.supir.samplers.registry import list_supir_samplers
 from apps.backend.runtime.families.supir.weights import SupirVariant, supir_weights_diagnostics
 
 
@@ -44,7 +45,17 @@ def build_router(
         return {
             "supir_models": supir_weights_diagnostics(roots=roots),
             "variants": [{"key": variant.value, "label": variant.value} for variant in SupirVariant],
-            "samplers": list(iter_supir_sampler_labels(include_dev=False)),
+            "samplers": [
+                {
+                    "id": spec.sampler_id.value,
+                    "label": spec.label,
+                    "stability": spec.stability,
+                    "native_sampler": spec.native_sampler,
+                    "native_scheduler": spec.native_scheduler,
+                }
+                for spec in list_supir_samplers()
+                if spec.stability == "stable"
+            ],
             "note": "Diagnostics-only surface. Native SUPIR mode runs through /api/img2img on SDXL.",
         }
 

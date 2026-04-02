@@ -9,7 +9,7 @@ Required Notice: see NOTICE
 Purpose: Typed SUPIR mode config for canonical SDXL img2img/inpaint ownership.
 Defines the nested `img2img_extras.supir` request surface used by the canonical img2img pipeline and a strict parser that:
 - accepts only the nested object shape,
-- validates the tranche-1 public SUPIR controls,
+- validates the tranche-1 public SUPIR controls, including the runtime-owned restore-window knob,
 - rejects flat legacy `supir_*` aliases and unknown keys.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -37,6 +37,7 @@ _ALLOWED_KEYS = frozenset(
         "sampler",
         "controlScale",
         "restorationScale",
+        "restoreCfgSTmin",
         "colorFix",
     }
 )
@@ -47,7 +48,7 @@ class SupirModeConfig:
     enabled: bool
     variant: SupirVariant
     sampler: SupirSamplerSpec
-    control_scale: float = 1.0
+    control_scale: float = 0.8
     restoration_scale: float = 4.0
     restore_cfg_s_tmin: float = 0.05
     color_fix: SupirColorFixMode = "None"
@@ -69,18 +70,6 @@ def _as_float(value: Any, *, name: str) -> float:
     if parsed != parsed or parsed in (float("inf"), float("-inf")):
         raise SupirConfigError(f"{name} must be finite")
     return parsed
-
-
-def _as_int(value: Any, *, name: str) -> int:
-    if isinstance(value, bool):
-        raise SupirConfigError(f"{name} must be an int, not bool")
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        if not value.is_integer():
-            raise SupirConfigError(f"{name} must be an int")
-        return int(value)
-    raise SupirConfigError(f"{name} must be an int")
 
 
 def _as_str(value: Any, *, name: str) -> str:
@@ -134,28 +123,41 @@ def parse_supir_mode_config(payload: Mapping[str, Any] | None) -> SupirModeConfi
     if not enabled:
         return None
 
-    variant = _parse_variant(payload.get("variant", SupirVariant.V0F.value))
+    variant = _parse_variant(payload.get("variant", SupirVariant.V0Q.value))
     sampler = resolve_supir_sampler(
-        payload.get("sampler", "Restore Euler EDM (Stable)"),
+        payload.get("sampler", "restore_euler_edm_stable"),
         include_dev=False,
     )
-    control_scale = _as_float(payload.get("controlScale", 1.0), name="img2img_extras.supir.controlScale")
+    control_scale = _as_float(payload.get("controlScale", 0.8), name="img2img_extras.supir.controlScale")
     restoration_scale = _as_float(
         payload.get("restorationScale", 4.0),
         name="img2img_extras.supir.restorationScale",
+    )
+    restore_cfg_s_tmin = _as_float(
+        payload.get("restoreCfgSTmin", 0.05),
+        name="img2img_extras.supir.restoreCfgSTmin",
     )
     color_fix = _parse_color_fix(payload.get("colorFix", "None"))
 
     if control_scale <= 0.0:
         raise SupirConfigError("img2img_extras.supir.controlScale must be > 0")
+    if control_scale > 2.0:
+        raise SupirConfigError("img2img_extras.supir.controlScale must be <= 2")
     if restoration_scale <= 0.0:
         raise SupirConfigError("img2img_extras.supir.restorationScale must be > 0")
+    if restoration_scale > 6.0:
+        raise SupirConfigError("img2img_extras.supir.restorationScale must be <= 6")
+    if restore_cfg_s_tmin < 0.0:
+        raise SupirConfigError("img2img_extras.supir.restoreCfgSTmin must be >= 0")
+    if restore_cfg_s_tmin > 5.0:
+        raise SupirConfigError("img2img_extras.supir.restoreCfgSTmin must be <= 5")
     return SupirModeConfig(
         enabled=True,
         variant=variant,
         sampler=sampler,
         control_scale=control_scale,
         restoration_scale=restoration_scale,
+        restore_cfg_s_tmin=restore_cfg_s_tmin,
         color_fix=color_fix,
     )
 

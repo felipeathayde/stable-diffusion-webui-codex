@@ -16,7 +16,8 @@ Persists a per-tab resume marker to `localStorage` and auto-reattaches to in-fli
 reconstructing truthful `currentRun` / history-selection state and preserving wall-clock gentime for runs that finish after resume.
 FLUX.2 img2img guidance emission is variant-aware (`img2img_cfg_scale` xor `img2img_distilled_cfg_scale`), and img2img hires emission is
 shared with the canonical hires payload builder while remaining blocked for masked runs. Native SDXL SUPIR mode stays on the single nested frontend owner
-`params.supir` and is emitted only through `img2img_extras.supir` for truthful SDXL img2img/inpaint runs.
+`params.supir` and is emitted only through `img2img_extras.supir` for truthful SDXL img2img/inpaint runs, with diagnostics-backed sampler metadata
+owning the effective runtime sampler/scheduler pair and fail-loud rejection of stale APG/advanced-guidance overlap.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ImageRunHistoryItem` (interface): Persisted per-tab run history entry (task id, status, summary, params snapshot, error message).
@@ -67,6 +68,7 @@ import type {
   GeneratedImage,
   GuidanceAdvancedCapabilities,
   ImageAutomationRequest,
+  SupirSamplerInfo,
   TaskErrorCode,
   TaskEvent,
 } from '../api/types'
@@ -75,6 +77,7 @@ import { buildExplicitImageRequestContract } from '../utils/image_request_contra
 import { normalizeMaskEnforcement } from '../utils/image_params'
 import { normalizeImg2ImgResizeModeForEngine } from '../utils/img2img_resize'
 import { formatSettingsRevisionConflictMessage, resolveSettingsRevisionConflict } from './settings_revision_conflict'
+import { resolveSupirSelectionState } from './useSupirDiagnostics'
 
 export type ImageRunStatus = 'running' | 'completed' | 'error' | 'cancelled'
 
@@ -150,13 +153,32 @@ function inferPromptPreviewFromSnapshot(paramsSnapshot: Record<string, unknown>)
   return String(paramsSnapshot.prompt || '').trim().slice(0, 120)
 }
 
+const SUPIR_SAMPLER_SUMMARY_INFO: Record<string, { label: string; scheduler: string }> = {
+  restore_heun_edm_stable: { label: 'Restore Heun EDM (Stable)', scheduler: 'karras' },
+  restore_euler_edm_stable: { label: 'Restore Euler EDM (Stable)', scheduler: 'karras' },
+  restore_dpmpp_2m_stable: { label: 'Restore DPM++ 2M (Stable)', scheduler: 'karras' },
+  restore_heun_edm_dev: { label: 'Restore Heun EDM (Dev)', scheduler: 'karras' },
+  restore_euler_edm_dev: { label: 'Restore Euler EDM (Dev)', scheduler: 'karras' },
+  restore_dpmpp_2m_dev: { label: 'Restore DPM++ 2M (Dev)', scheduler: 'karras' },
+}
+
 function inferRunSummaryFromSnapshot(paramsSnapshot: Record<string, unknown>): string {
   const width = Math.trunc(Number(paramsSnapshot.width))
   const height = Math.trunc(Number(paramsSnapshot.height))
   const steps = Math.trunc(Number(paramsSnapshot.steps))
   const cfgScale = Number(paramsSnapshot.cfgScale)
-  const sampler = String(paramsSnapshot.sampler || '').trim()
-  const scheduler = String(paramsSnapshot.scheduler || '').trim()
+  const supirSnapshot = paramsSnapshot.supir && typeof paramsSnapshot.supir === 'object'
+    ? paramsSnapshot.supir as Record<string, unknown>
+    : null
+  const supirEnabled = Boolean(supirSnapshot?.enabled)
+  const supirSamplerKey = String(supirSnapshot?.sampler || '').trim()
+  const supirSummaryInfo = SUPIR_SAMPLER_SUMMARY_INFO[supirSamplerKey] ?? null
+  const sampler = supirEnabled
+    ? (supirSummaryInfo?.label || supirSamplerKey || String(paramsSnapshot.sampler || '').trim())
+    : String(paramsSnapshot.sampler || '').trim()
+  const scheduler = supirEnabled
+    ? (supirSummaryInfo?.scheduler || '')
+    : String(paramsSnapshot.scheduler || '').trim()
   const batchCount = Math.max(1, Math.trunc(Number(paramsSnapshot.batchCount || 1)))
   const batchSize = Math.max(1, Math.trunc(Number(paramsSnapshot.batchSize || 1)))
   const seed = Number(paramsSnapshot.seed)
@@ -383,6 +405,8 @@ export interface BuildImg2ImgPayloadArgs {
   hiresFallbackOnOom: boolean
   hiresMinTile: number
   extras: Record<string, unknown>
+  samplerOverride?: string
+  schedulerOverride?: string
 }
 
 function buildImg2ImgGuidanceFields(
@@ -397,6 +421,8 @@ function buildImg2ImgGuidanceFields(
 
 export function buildImg2ImgPayload(args: BuildImg2ImgPayloadArgs): Record<string, unknown> {
   const params = args.params
+  const effectiveSampler = String(args.samplerOverride || params.sampler || '').trim()
+  const effectiveScheduler = String(args.schedulerOverride || params.scheduler || '').trim()
   const useMask = normalizeBooleanParam(params.useMask, false)
   const hiresEnabled = normalizeBooleanParam(params.hires?.enabled, false)
   const maskInvert = normalizeBooleanParam(params.maskInvert, false)
@@ -434,8 +460,8 @@ export function buildImg2ImgPayload(args: BuildImg2ImgPayloadArgs): Record<strin
     img2img_denoising_strength: params.denoiseStrength,
     img2img_width: params.width,
     img2img_height: params.height,
-    img2img_sampling: params.sampler,
-    img2img_scheduler: params.scheduler,
+    img2img_sampling: effectiveSampler,
+    img2img_scheduler: effectiveScheduler,
     img2img_seed: params.seed,
     img2img_clip_skip: params.clipSkip,
     device: args.device,
@@ -510,8 +536,9 @@ function buildSupirPayload(
     hiresEnabled: boolean
     ipAdapterEnabled: boolean
     hasLoraSelection: boolean
+    guidanceAdvancedEnabled: boolean
   },
-): Record<string, unknown> | null {
+): { payload: Record<string, unknown>; samplerInfo: SupirSamplerInfo } | null {
   if (!normalizeBooleanParam(supir.enabled, false)) return null
   if (!options.useInitImage) {
     throw new Error('SUPIR mode is only available for SDXL img2img/inpaint.')
@@ -528,21 +555,34 @@ function buildSupirPayload(
   if (options.hasLoraSelection) {
     throw new Error('SUPIR mode cannot be combined with LoRA selections. Remove LoRA tags before generating.')
   }
-  const sampler = String(supir.sampler || '').trim()
-  if (!sampler) {
-    throw new Error('Select a SUPIR sampler.')
+  const selection = resolveSupirSelectionState({
+    supported: true,
+    selectedVariant: supir.variant,
+    selectedSampler: supir.sampler,
+    guidanceAdvancedEnabled: options.guidanceAdvancedEnabled,
+  })
+  if (selection.blockingReason) {
+    throw new Error(selection.blockingReason)
+  }
+  if (!selection.selectedSamplerInfo) {
+    throw new Error(`Selected SUPIR sampler '${String(supir.sampler || '').trim()}' is unavailable.`)
   }
   const variant = supir.variant === 'v0F' ? 'v0F' : 'v0Q'
   const colorFix = supir.colorFix === 'AdaIN' || supir.colorFix === 'Wavelet' ? supir.colorFix : 'None'
   const controlScale = Number.isFinite(Number(supir.controlScale)) ? Number(supir.controlScale) : 0.8
   const restorationScale = Number.isFinite(Number(supir.restorationScale)) ? Number(supir.restorationScale) : 4
+  const restoreCfgSTmin = Number.isFinite(Number(supir.restoreCfgSTmin)) ? Number(supir.restoreCfgSTmin) : 0.05
   return {
-    enabled: true,
-    variant,
-    sampler,
-    controlScale: Math.min(2, Math.max(0.01, controlScale)),
-    restorationScale: Math.min(6, Math.max(0.01, restorationScale)),
-    colorFix,
+    payload: {
+      enabled: true,
+      variant,
+      sampler: selection.selectedSamplerInfo.id,
+      controlScale: Math.min(2, Math.max(0.01, controlScale)),
+      restorationScale: Math.min(6, Math.max(0.01, restorationScale)),
+      restoreCfgSTmin: Math.min(5, Math.max(0, restoreCfgSTmin)),
+      colorFix,
+    },
+    samplerInfo: selection.selectedSamplerInfo,
   }
 }
 
@@ -642,9 +682,15 @@ export function useGeneration(tabId: string) {
   const params = computed(() => tab.value?.params as ImageBaseParams | undefined)
   const engineType = computed(() => tab.value?.type as string | undefined)
 
-  function buildRunSummary(p: ImageBaseParams, guidanceMode: 'cfg' | 'distilled_cfg'): string {
-    const sampler = p.sampler
-    const scheduler = p.scheduler
+  function buildRunSummary(
+    p: ImageBaseParams,
+    guidanceMode: 'cfg' | 'distilled_cfg',
+    effectiveSampling?: { sampler: string; scheduler: string; supirLabel?: string } | null,
+  ): string {
+    const sampler = p.supir.enabled
+      ? String(effectiveSampling?.supirLabel || effectiveSampling?.sampler || p.supir.sampler || p.sampler || '').trim()
+      : String(p.sampler || '').trim()
+    const scheduler = String(effectiveSampling?.scheduler || p.scheduler || '').trim()
     const seedLabel = p.seed === -1 ? 'seed random' : `seed ${p.seed}`
     const clipSkipLabel = Number.isFinite(p.clipSkip) && p.clipSkip > 0 && p.clipSkip !== 1 ? ` · clip-skip ${p.clipSkip}` : ''
     const guidanceLabel = guidanceMode === 'distilled_cfg' ? 'distilled cfg' : 'cfg'
@@ -781,8 +827,12 @@ export function useGeneration(tabId: string) {
     return request
   }
 
-  function buildParamsSnapshot(p: ImageBaseParams, engineId: string): Record<string, unknown> {
-    return {
+  function buildParamsSnapshot(
+    p: ImageBaseParams,
+    engineId: string,
+    effectiveSampling?: { sampler: string; scheduler: string } | null,
+  ): Record<string, unknown> {
+    const snapshot: Record<string, unknown> = {
       checkpoint: p.checkpoint,
       textEncoders: p.textEncoders,
 
@@ -791,8 +841,8 @@ export function useGeneration(tabId: string) {
 
       width: p.width,
       height: p.height,
-      sampler: p.sampler,
-      scheduler: p.scheduler,
+      sampler: String(p.sampler || '').trim(),
+      scheduler: String(p.scheduler || '').trim(),
       steps: p.steps,
       cfgScale: p.cfgScale,
       seed: p.seed,
@@ -816,6 +866,7 @@ export function useGeneration(tabId: string) {
       supir: p.supir,
       ipAdapter: p.ipAdapter,
     }
+    return snapshot
   }
 
   function pushHistory(item: ImageRunHistoryItem): void {
@@ -1060,8 +1111,6 @@ export function useGeneration(tabId: string) {
     const usesDistilledCfgModel = guidanceMode === 'distilled_cfg'
     const createdAtMs = state.value.startedAtMs ?? Date.now()
     const promptPreview = String(p.prompt || '').trim().slice(0, 120)
-    const summary = buildRunSummary(p, guidanceMode)
-    const paramsSnapshot = buildParamsSnapshot(p, engineOverrideForRequest)
     const automationRun = usesImageAutomation(p)
     const batchSize = Math.max(1, Math.trunc(Number(p.batchSize)))
     const batchCount = Math.max(1, Math.trunc(Number(p.batchCount)))
@@ -1091,6 +1140,7 @@ export function useGeneration(tabId: string) {
       return
     }
 
+    let effectiveSampling: { sampler: string; scheduler: string; supirLabel?: string } | null = null
     try {
       const supirPayload = buildSupirPayload(p.supir, {
         engineId: engineOverrideForRequest,
@@ -1099,15 +1149,23 @@ export function useGeneration(tabId: string) {
         hiresEnabled: normalizeBooleanParam(p.hires?.enabled, false),
         ipAdapterEnabled: normalizeBooleanParam(p.ipAdapter?.enabled, false),
         hasLoraSelection: loraNames.length > 0,
+        guidanceAdvancedEnabled: normalizeBooleanParam(p.guidanceAdvanced.enabled, false),
       })
       if (supirPayload) {
-        extras.supir = supirPayload
+        extras.supir = supirPayload.payload
+        effectiveSampling = {
+          sampler: supirPayload.samplerInfo.native_sampler,
+          scheduler: supirPayload.samplerInfo.native_scheduler,
+          supirLabel: supirPayload.samplerInfo.label,
+        }
       }
     } catch (error) {
       state.value.status = 'error'
       state.value.errorMessage = error instanceof Error ? error.message : String(error)
       return
     }
+    const summary = buildRunSummary(p, guidanceMode, effectiveSampling)
+    const paramsSnapshot = buildParamsSnapshot(p, engineOverrideForRequest, effectiveSampling)
 
     if (loraNames.length > 0) {
       const loraShas: string[] = []
@@ -1147,6 +1205,8 @@ export function useGeneration(tabId: string) {
           hiresFallbackOnOom: Boolean(upscalersStore.fallbackOnOom),
           hiresMinTile: Number(upscalersStore.minTile),
           extras,
+          samplerOverride: effectiveSampling?.sampler,
+          schedulerOverride: effectiveSampling?.scheduler,
         })
         if (automationRun) {
           if (usesInitFolderSource) {

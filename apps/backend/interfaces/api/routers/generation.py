@@ -12,7 +12,8 @@ Contains request parsing and payload validation (including hires tile config via
 `apps/backend/interfaces/api/tasks/generation_tasks.py`.
 Also owns the backend-owned `/api/image-automation` envelope (loop/seed/prompt/init-source parsing plus repo-fenced folder and wildcard roots),
 validates nested IP-Adapter selectors/source kinds before delegating runtime application to the shared sampling stage, and preflights native
-SUPIR mode under `img2img_extras.supir` for truthful SDXL img2img/inpaint admission.
+SUPIR mode under `img2img_extras.supir` for truthful SDXL img2img/inpaint admission, including fail-loud rejection of `img2img_extras.guidance`
+when SUPIR mode is active.
 Txt2img model-stage ownership is explicit: top-level `extras.swap_model` is the first-pass mid-generation stage config, `extras.hires.swap_model`
 is the selector-only second-pass replacement seam, and `extras.refiner` / `extras.hires.refiner` remain SDXL-native refiner stages.
 Hires supports sampler/scheduler overrides for the hires pass (txt2img: `extras.hires.sampler` / `extras.hires.scheduler`; img2img: `img2img_hires_sampling` / `img2img_hires_scheduler`) and validates override compatibility at API parse-time.
@@ -4803,6 +4804,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 engine_key=engine_key,
                 field_name="img2img_extras.supir",
             )
+            if isinstance(extras.get("guidance"), dict):
+                raise HTTPException(
+                    status_code=400,
+                    detail="'img2img_extras.supir' cannot be combined with 'img2img_extras.guidance'.",
+                )
             if bool(hires_data.get("enable")):
                 raise HTTPException(
                     status_code=400,

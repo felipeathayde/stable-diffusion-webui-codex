@@ -11,7 +11,8 @@ Owns prompt + parameter controls, init-image + mask handling for img2img/inpaint
 submit `/api/txt2img`/`/api/img2img` tasks and render progress/results (Z-Image Turbo/Base and FLUX.2 Klein distilled/base-4B are variant-dependent:
 CFG label + negative prompt gating follow the selected checkpoint/tab state, while img2img denoise + hires visibility stay truthful to the active capability/mask contract).
 The RUN surface now owns a split-button `Generate` / `Infinite` action selector, the Initial Image seam owns the `DIR|IMG` source switch for img2img automation,
-and dedicated IP-Adapter + SUPIR cards sit on truthful nested-owner surfaces with parent-owned blocking/gating/readiness and card-local render/emit APIs for in-place recovery.
+IP-Adapter stays on its dedicated nested-owner card, and SUPIR mode now lives on the header toggle plus a split body surface: `Img2ImgBasicParametersCard` owns the SUPIR sampler/scheduler row,
+while `SupirModeCard` owns the remaining SUPIR-specific controls with parent-owned blocking/gating/readiness.
 When inpaint masking is active, it also forwards natural init-image dimensions, current processing target dimensions, and the current invert-mask state to the shared card/editor preview seam, treats unresolved natural dims as unavailable instead of falling back to processing dims, and normalizes the invalid `maskInvert + maskRegionSplit` pair in the shared parent-owned param path.
 When `useInitImage=true`, generation parameters render through `Img2ImgBasicParametersCard` (shared layout with honest img2img control visibility).
 CFG Advanced/APG controls are capability-gated (`engineSurface.guidance_advanced`) and persist through tab params/profile snapshots.
@@ -30,7 +31,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `sendToWorkflows` (function): Sends the current params snapshot to the workflows subsystem (async).
 - `copyCurrentParams` (function): Copies current params snapshot to clipboard (async).
 - `onCancelRun` (function): Cancels the active run (XYZ sweep immediate stop or current image task cancel).
-- `showSupirModeCard` / `supirBlockingReason` / `supirVariantChoices` / `supirSamplerChoices` (const): SUPIR-mode discoverability, readiness, and nested-owner selector surface for truthful SDXL img2img/inpaint.
+- `showSupirModeCard` / `supportsSupirModeSurface` / `supirSelectionState` / `supirBlockingReason` (const): Shared SUPIR discoverability/readiness contract for the header toggle and split img2img parameter surface.
 - `copyHistoryParams` (function): Copies a history entry’s params snapshot to clipboard (async).
 - `applyHistory` (function): Applies a history entry back into current state (prompt/params/assets).
 - `formatHistoryTitle` (function): Builds a human-friendly history title from a run entry.
@@ -166,61 +167,76 @@ Symbols (top-level; keep in sync; no ghosts):
           </div>
         </div>
         <div class="panel-body">
-          <Img2ImgBasicParametersCard
-            v-if="params.useInitImage"
-            :samplers="filteredSamplers"
-            :schedulers="filteredSchedulers"
-            :recommended-samplers="recommendedSamplers"
-            :recommended-schedulers="recommendedSchedulers"
-            :upscalers="upscalers"
-            :upscalersLoading="upscalersLoading"
-            :upscalersError="upscalersError"
-            :sampler="params.sampler"
-            :scheduler="params.scheduler"
-            :steps="params.steps"
-            :width="params.width"
-            :height="params.height"
-            :cfg-scale="params.cfgScale"
-            :cfg-label="cfgLabel"
-            :denoise-strength="params.denoiseStrength"
-            :show-denoise="true"
-            :seed="params.seed"
-            :clip-skip="params.clipSkip"
-            :show-clip-skip="showClipSkip"
-            :min-clip-skip="minClipSkip"
-            :max-clip-skip="12"
-            :guidance-advanced="params.guidanceAdvanced"
-            :guidance-support="guidanceAdvancedSupport"
-            :upscaler="params.img2imgUpscaler"
-            :resize-mode="params.img2imgResizeMode"
-            :resize-mode-options="img2imgResizeModeOptions"
-            :show-resize-mode="!(resolvedEngineForMode === 'zimage' && params.useMask)"
-            :dimension-snap-mode="resolvedEngineForMode === 'zimage' ? 'floor' : 'nearest'"
-            :show-init-image-dims="Boolean(params.initImageData)"
-            :width-step="imageDimensionSliderStep"
-            :width-input-step="imageDimensionInputStep"
-            :height-step="imageDimensionSliderStep"
-            :height-input-step="imageDimensionInputStep"
-            :disabled="isRunning"
-            @update:sampler="onSamplerChange"
-            @update:scheduler="(v) => setParams({ scheduler: v })"
-            @update:steps="(v) => setParams({ steps: Math.max(1, Math.trunc(v)) })"
-            @update:width="(v) => setParams({ width: normalizeImageDimension(v) })"
-            @update:height="(v) => setParams({ height: normalizeImageDimension(v) })"
-            @update:cfgScale="(v) => setParams({ cfgScale: v })"
-            @update:denoiseStrength="(v) => setParams({ denoiseStrength: clampFloat(v, 0, 1) })"
-            @update:seed="(v) => setParams({ seed: Math.trunc(v) })"
-            @update:clipSkip="(v) => setParams({ clipSkip: Math.max(minClipSkip, Math.trunc(v)) })"
-            @update:guidanceAdvanced="setGuidanceAdvanced"
-            @update:upscaler="(v) => setParams({ img2imgUpscaler: String(v || '').trim() })"
-            @update:resizeMode="(v) => setParams({ img2imgResizeMode: normalizeImg2ImgResizeModeForEngine(resolvedEngineForMode, v) })"
-            @random-seed="randomizeSeed"
-            @reuse-seed="reuseSeed"
-            @sync-init-image-dims="syncInitImageDims"
-          />
+          <template v-if="params.useInitImage">
+            <Img2ImgBasicParametersCard
+              :samplers="filteredSamplers"
+              :schedulers="filteredSchedulers"
+              :recommended-samplers="recommendedSamplers"
+              :recommended-schedulers="recommendedSchedulers"
+              :upscalers="upscalers"
+              :upscalersLoading="upscalersLoading"
+              :upscalersError="upscalersError"
+              :sampler="params.sampler"
+              :scheduler="params.scheduler"
+              :steps="params.steps"
+              :width="params.width"
+              :height="params.height"
+              :cfg-scale="params.cfgScale"
+              :cfg-label="cfgLabel"
+              :denoise-strength="params.denoiseStrength"
+              :show-denoise="true"
+              :seed="params.seed"
+              :clip-skip="params.clipSkip"
+              :show-clip-skip="showClipSkip"
+              :min-clip-skip="minClipSkip"
+              :max-clip-skip="12"
+              :guidance-advanced="params.guidanceAdvanced"
+              :guidance-support="guidanceAdvancedSupport"
+              :supir="params.supir"
+              :supir-sampler-choices="supirSamplerChoices"
+              :supir-selected-sampler-info="supirSelectedSamplerInfo"
+              :supir-blocking-reason="supirBlockingReason"
+              :upscaler="params.img2imgUpscaler"
+              :resize-mode="params.img2imgResizeMode"
+              :resize-mode-options="img2imgResizeModeOptions"
+              :show-resize-mode="!(resolvedEngineForMode === 'zimage' && params.useMask)"
+              :dimension-snap-mode="resolvedEngineForMode === 'zimage' ? 'floor' : 'nearest'"
+              :show-init-image-dims="Boolean(params.initImageData)"
+              :width-step="imageDimensionSliderStep"
+              :width-input-step="imageDimensionInputStep"
+              :height-step="imageDimensionSliderStep"
+              :height-input-step="imageDimensionInputStep"
+              :disabled="isRunning"
+              @update:sampler="onSamplerChange"
+              @update:scheduler="(v) => setParams({ scheduler: v })"
+              @update:steps="(v) => setParams({ steps: Math.max(1, Math.trunc(v)) })"
+              @update:width="(v) => setParams({ width: normalizeImageDimension(v) })"
+              @update:height="(v) => setParams({ height: normalizeImageDimension(v) })"
+              @update:cfgScale="(v) => setParams({ cfgScale: v })"
+              @update:denoiseStrength="(v) => setParams({ denoiseStrength: clampFloat(v, 0, 1) })"
+              @update:seed="(v) => setParams({ seed: Math.trunc(v) })"
+              @update:clipSkip="(v) => setParams({ clipSkip: Math.max(minClipSkip, Math.trunc(v)) })"
+              @update:guidanceAdvanced="setGuidanceAdvanced"
+              @patch:supir="setSupir"
+              @update:upscaler="(v) => setParams({ img2imgUpscaler: String(v || '').trim() })"
+              @update:resizeMode="(v) => setParams({ img2imgResizeMode: normalizeImg2ImgResizeModeForEngine(resolvedEngineForMode, v) })"
+              @random-seed="randomizeSeed"
+              @reuse-seed="reuseSeed"
+              @sync-init-image-dims="syncInitImageDims"
+            />
 
-	          <BasicParametersCard
-	            v-else
+            <SupirModeCard
+              v-if="showSupirModeCard"
+              :disabled="isRunning"
+              :supir="params.supir"
+              :variant-choices="supirVariantChoices"
+              :blocking-reason="supirBlockingReason"
+              @patch:supir="setSupir"
+            />
+          </template>
+
+          <BasicParametersCard
+            v-else
             :samplers="filteredSamplers"
             :schedulers="filteredSchedulers"
             :recommended-samplers="recommendedSamplers"
@@ -263,17 +279,7 @@ Symbols (top-level; keep in sync; no ghosts):
 	            @reuse-seed="reuseSeed"
 	          />
 
-	          <SupirModeCard
-	            v-if="showSupirModeCard"
-	            :disabled="isRunning"
-	            :toggleDisabled="supirToggleDisabled"
-	            :supir="params.supir"
-	            :variantChoices="supirVariantChoices"
-	            :samplerChoices="supirSamplerChoices"
-	            :blockingReason="supirBlockingReason"
-	            @patch:supir="setSupir"
-		          />
-				          <SwapStageSettingsCard
+					          <SwapStageSettingsCard
 			            v-if="showGlobalSwapModel"
 		            :enabled="params.swapModel.enabled"
 		            :swapAtStep="params.swapModel.swapAtStep"
@@ -578,18 +584,19 @@ Symbols (top-level; keep in sync; no ghosts):
 <script setup lang="ts">
 import { storeToRefs } from 'pinia'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { fetchPaths, fetchSamplers, fetchSchedulers, fetchSupirModels } from '../api/client'
+import { fetchPaths, fetchSamplers, fetchSchedulers } from '../api/client'
 import type {
   GeneratedImage,
   GuidanceAdvancedCapabilities,
   SamplerInfo,
   SchedulerInfo,
-  SupirModelsResponse,
 } from '../api/types'
 import { formatJson, useResultsCard } from '../composables/useResultsCard'
 import { resolveEngineForRequest, useGeneration, type ImageRunHistoryItem } from '../composables/useGeneration'
+import { resolveSupirSelectionState, useSupirDiagnostics } from '../composables/useSupirDiagnostics'
 import {
   defaultImageParamsForType,
+  normalizeSupirSamplerSelection,
   useModelTabsStore,
   type GuidanceAdvancedParams,
   type ImageBaseParams,
@@ -685,10 +692,7 @@ const samplers = ref<SamplerInfo[]>([])
 const schedulers = ref<SchedulerInfo[]>([])
 const historyDetailsOpen = ref(false)
 const historyDetailsItem = ref<ImageRunHistoryItem | null>(null)
-const supirDiagnostics = ref<SupirModelsResponse | null>(null)
-const supirDiagnosticsLoading = ref(false)
-const supirDiagnosticsError = ref('')
-const supirDiagnosticsAttempted = ref(false)
+const { ensureSupirDiagnosticsLoaded } = useSupirDiagnostics()
 
 onMounted(() => {
   bootstrap
@@ -704,20 +708,6 @@ onMounted(() => {
       // Fatal state is already set by bootstrap store.
     })
 })
-
-async function ensureSupirDiagnosticsLoaded(): Promise<void> {
-  if (supirDiagnostics.value || supirDiagnosticsLoading.value || supirDiagnosticsAttempted.value) return
-  supirDiagnosticsAttempted.value = true
-  supirDiagnosticsLoading.value = true
-  supirDiagnosticsError.value = ''
-  try {
-    supirDiagnostics.value = await fetchSupirModels()
-  } catch (error) {
-    supirDiagnosticsError.value = error instanceof Error ? error.message : String(error)
-  } finally {
-    supirDiagnosticsLoading.value = false
-  }
-}
 
 onBeforeUnmount(() => {
   stopStream()
@@ -924,50 +914,35 @@ const ipAdapterImageEncoderChoices = computed(() => quicksettingsStore.ipAdapter
   label: toInventoryChoiceLabel(value),
 })))
 const supirEnabled = computed(() => Boolean(params.value.supir.enabled))
-const showSupirModeCard = computed(() => (
+const supportsSupirModeSurface = computed(() => (
   props.type === 'sdxl'
-  && Boolean(params.value.useInitImage)
   && Boolean(engineSurface.value?.supports_supir_mode)
 ))
-const supirVariantChoices = computed(() => {
-  const expected = supirDiagnostics.value?.supir_models?.expected ?? {}
-  return (supirDiagnostics.value?.variants ?? []).map((entry) => ({
-    value: String(entry.key || '').trim(),
-    label: String(entry.label || entry.key || '').trim(),
-    available: Boolean(expected[String(entry.key || '').trim()]?.present),
-  }))
-})
-const supirSamplerChoices = computed(() => Array.from(new Set(
-  (supirDiagnostics.value?.samplers ?? [])
-    .map((entry) => String(entry || '').trim())
-    .filter((entry) => entry.length > 0),
-)))
-const supirAvailableVariants = computed(() => (
-  supirVariantChoices.value.filter((entry) => entry.available && (entry.value === 'v0F' || entry.value === 'v0Q'))
+const showSupirModeCard = computed(() => supportsSupirModeSurface.value && params.value.useInitImage)
+const supirSelectionState = computed(() => resolveSupirSelectionState({
+  supported: supportsSupirModeSurface.value,
+  selectedVariant: params.value.supir.variant,
+  selectedSampler: params.value.supir.sampler,
+  guidanceAdvancedEnabled: params.value.guidanceAdvanced.enabled,
+}))
+const supirVariantChoices = computed(() => supirSelectionState.value.variantChoices)
+const supirSamplerChoices = computed(() => supirSelectionState.value.samplerChoices)
+const supirSelectionValid = computed(() => supirSelectionState.value.selectionValid)
+const supirSelectedSamplerInfo = computed(() => supirSelectionState.value.selectedSamplerInfo)
+const supirBlockingReason = computed(() => (
+  supportsSupirModeSurface.value ? supirSelectionState.value.blockingReason : ''
 ))
-const supirSelectedVariantInstalled = computed(() => (
-  supirVariantChoices.value.some((entry) => entry.value === params.value.supir.variant && entry.available)
-))
-const supirSelectedSamplerAvailable = computed(() => (
-  supirSamplerChoices.value.includes(String(params.value.supir.sampler || '').trim())
-))
-const supirSelectionValid = computed(() => (
-  supirSelectedVariantInstalled.value && supirSelectedSamplerAvailable.value
-))
-const supirBlockingReason = computed(() => {
-  if (!showSupirModeCard.value) return ''
-  if (supirDiagnosticsLoading.value) return 'Loading SUPIR diagnostics…'
-  if (supirDiagnosticsError.value) return `Failed to load SUPIR diagnostics: ${supirDiagnosticsError.value}`
-  if (supirAvailableVariants.value.length === 0) return 'No SUPIR variants are installed under the configured supir_models roots.'
-  if (supirSamplerChoices.value.length === 0) return 'The backend did not report any SUPIR samplers.'
-  if (!supirSelectedVariantInstalled.value) return `Selected SUPIR variant '${params.value.supir.variant}' is not installed.`
-  if (!supirSelectedSamplerAvailable.value) return `Selected SUPIR sampler '${params.value.supir.sampler}' is unavailable.`
+
+function getSupirRestoreBlockingReason(candidate: Pick<ImageBaseParams, 'useInitImage' | 'guidanceAdvanced' | 'supir'>): string {
+  if (!candidate.supir.enabled) return ''
+  if (!candidate.useInitImage) return 'SUPIR mode requires Img2Img/Inpaint mode.'
+  if (!supportsSupirModeSurface.value) return 'SUPIR mode is unavailable for the active engine.'
+  if (candidate.guidanceAdvanced.enabled) {
+    return 'SUPIR mode cannot be enabled while Advanced Guidance/APG is active. Disable Advanced Guidance first.'
+  }
   return ''
-})
-const supirToggleDisabled = computed(() => (
-  isRunning.value
-  || (!supirEnabled.value && Boolean(supirBlockingReason.value))
-))
+}
+
 const showIpAdapterCard = computed(() => !supirEnabled.value && (ipAdapterSupported.value || params.value.ipAdapter.enabled))
 const infiniteXyzConflict = computed(() => params.value.runAction === 'infinite' && xyzStore.enabled)
 const automationBatchConflict = computed(() => (
@@ -1428,10 +1403,9 @@ watch(
 )
 
 watch(
-  showSupirModeCard,
-  (show) => {
-    if (!show) {
-      supirDiagnosticsAttempted.value = false
+  supportsSupirModeSurface,
+  (supported) => {
+    if (!supported) {
       if (params.value.supir.enabled) {
         setSupir({ enabled: false })
       }
@@ -1440,6 +1414,14 @@ watch(
     void ensureSupirDiagnosticsLoaded()
   },
   { immediate: true },
+)
+
+watch(
+  () => params.value.useInitImage,
+  (enabled) => {
+    if (enabled || !params.value.supir.enabled) return
+    setSupir({ enabled: false })
+  },
 )
 
 watch(
@@ -1622,15 +1604,42 @@ async function onCopyHistoryDetails(): Promise<void> {
 
 function applyHistory(item: ImageRunHistoryItem): void {
   const snap = item.paramsSnapshot as Partial<ImageBaseParams>
-  setParams({
+  const snapshotUseInitImage = Boolean(snap.useInitImage ?? (item.mode === 'img2img' || snap.supir?.enabled))
+  const snapshotUseMask = snapshotUseInitImage && Boolean(snap.useMask)
+  const snapshotGuidanceAdvanced = (snap.guidanceAdvanced && typeof snap.guidanceAdvanced === 'object')
+    ? normalizeGuidanceAdvancedPatch(snap.guidanceAdvanced, fallbackParams.value.guidanceAdvanced)
+    : fallbackParams.value.guidanceAdvanced
+  const rawSupir = (snap.supir && typeof snap.supir === 'object')
+    ? snap.supir as Partial<SupirModeFormState>
+    : null
+  const snapshotSupir: SupirModeFormState = rawSupir
+    ? {
+        ...fallbackParams.value.supir,
+        ...rawSupir,
+        sampler: normalizeSupirSamplerSelection(rawSupir.sampler, fallbackParams.value.supir.sampler),
+      }
+    : fallbackParams.value.supir
+  const nextPatch: Partial<ImageBaseParams> = {
     ...snap,
-    useInitImage: false,
+    useInitImage: snapshotUseInitImage,
     initImageData: '',
     initImageName: '',
-    useMask: false,
+    useMask: snapshotUseMask,
     maskImageData: '',
     maskImageName: '',
+    guidanceAdvanced: snapshotGuidanceAdvanced,
+    supir: snapshotSupir,
+  }
+  const blockingReason = getSupirRestoreBlockingReason({
+    useInitImage: snapshotUseInitImage,
+    guidanceAdvanced: snapshotGuidanceAdvanced,
+    supir: snapshotSupir,
   })
+  if (blockingReason) {
+    toast(`Cannot apply history params: ${blockingReason}`)
+    return
+  }
+  setParams(nextPatch)
   toast('Applied history params.')
 }
 
@@ -1719,17 +1728,61 @@ function loadProfile(): void {
     const clipSkip = numberOrNull(snapshot.clipSkip); if (clipSkip !== null) next.clipSkip = Math.max(minClipSkip.value, Math.trunc(clipSkip))
     const batchSize = numberOrNull(snapshot.batchSize); if (batchSize !== null) next.batchSize = Math.max(1, Math.trunc(batchSize))
     const batchCount = numberOrNull(snapshot.batchCount); if (batchCount !== null) next.batchCount = Math.max(1, Math.trunc(batchCount))
-    if (snapshot.guidanceAdvanced && typeof snapshot.guidanceAdvanced === 'object') {
-      next.guidanceAdvanced = normalizeGuidanceAdvancedPatch(snapshot.guidanceAdvanced, params.value.guidanceAdvanced)
-    }
+    const snapshotGuidanceAdvanced = (snapshot.guidanceAdvanced && typeof snapshot.guidanceAdvanced === 'object')
+      ? normalizeGuidanceAdvancedPatch(snapshot.guidanceAdvanced, fallbackParams.value.guidanceAdvanced)
+      : fallbackParams.value.guidanceAdvanced
 
     const selectedModel = typeof snapshot.selectedModel === 'string' ? snapshot.selectedModel : ''
     const selectedSampler = typeof snapshot.selectedSampler === 'string' ? snapshot.selectedSampler : ''
     const selectedScheduler = typeof snapshot.selectedScheduler === 'string' ? snapshot.selectedScheduler : ''
+    const hasUseInitImage = Object.prototype.hasOwnProperty.call(snapshot, 'useInitImage')
+    const hasUseMask = Object.prototype.hasOwnProperty.call(snapshot, 'useMask')
+    const hasDenoiseStrength = Object.prototype.hasOwnProperty.call(snapshot, 'denoiseStrength')
+    const hasResizeMode = Object.prototype.hasOwnProperty.call(snapshot, 'img2imgResizeMode')
+    const hasUpscaler = Object.prototype.hasOwnProperty.call(snapshot, 'img2imgUpscaler')
+    const hasSupirSnapshot = Object.prototype.hasOwnProperty.call(snapshot, 'supir')
+    const denoiseStrength = numberOrNull(snapshot.denoiseStrength)
+    const supirSnapshot = (snapshot.supir && typeof snapshot.supir === 'object')
+      ? snapshot.supir as Partial<SupirModeFormState>
+      : null
+    const useInitImage = hasUseInitImage
+      ? Boolean(snapshot.useInitImage)
+      : Boolean(supirSnapshot?.enabled || params.value.useInitImage)
+    const useMask = useInitImage && (hasUseMask ? Boolean(snapshot.useMask) : params.value.useMask)
 
     if (selectedModel) next.checkpoint = selectedModel
     if (selectedSampler) next.sampler = selectedSampler
     if (selectedScheduler) next.scheduler = selectedScheduler
+    if (hasDenoiseStrength && denoiseStrength !== null) next.denoiseStrength = clampFloat(denoiseStrength, 0, 1)
+    if (hasResizeMode && typeof snapshot.img2imgResizeMode === 'string') next.img2imgResizeMode = snapshot.img2imgResizeMode as ImageBaseParams['img2imgResizeMode']
+    if (hasUpscaler && typeof snapshot.img2imgUpscaler === 'string') next.img2imgUpscaler = snapshot.img2imgUpscaler
+    if (hasUseInitImage || hasUseMask || hasSupirSnapshot) {
+      next.useInitImage = useInitImage
+      next.useMask = useMask
+      next.initImageData = ''
+      next.initImageName = ''
+      next.maskImageData = ''
+      next.maskImageName = ''
+    }
+    const snapshotSupir: SupirModeFormState = hasSupirSnapshot
+      ? {
+          ...fallbackParams.value.supir,
+          ...(supirSnapshot ?? {}),
+          sampler: normalizeSupirSamplerSelection(supirSnapshot?.sampler, fallbackParams.value.supir.sampler),
+        }
+      : fallbackParams.value.supir
+    next.guidanceAdvanced = snapshotGuidanceAdvanced
+    next.supir = snapshotSupir
+
+    const blockingReason = getSupirRestoreBlockingReason({
+      useInitImage: next.useInitImage ?? fallbackParams.value.useInitImage,
+      guidanceAdvanced: snapshotGuidanceAdvanced,
+      supir: snapshotSupir,
+    })
+    if (blockingReason) {
+      toast(`Cannot load saved profile: ${blockingReason}`)
+      return
+    }
 
     setParams(next)
     toast('Loaded saved profile.')
@@ -1756,6 +1809,12 @@ function saveProfile(): void {
       selectedModel: params.value.checkpoint,
       selectedSampler: params.value.sampler,
       selectedScheduler: params.value.scheduler,
+      useInitImage: params.value.useInitImage,
+      useMask: params.value.useMask,
+      denoiseStrength: params.value.denoiseStrength,
+      img2imgResizeMode: params.value.img2imgResizeMode,
+      img2imgUpscaler: params.value.img2imgUpscaler,
+      supir: params.value.supir,
     }
     localStorage.setItem(key, JSON.stringify(snapshot))
     toast('Profile saved.')
@@ -1873,6 +1932,7 @@ function setSupir(patch: SupirPatch): void {
   nextSupir.sampler = String(nextSupir.sampler || '').trim()
   nextSupir.controlScale = clampFloat(Number(nextSupir.controlScale), 0.01, 2)
   nextSupir.restorationScale = clampFloat(Number(nextSupir.restorationScale), 0.01, 6)
+  nextSupir.restoreCfgSTmin = clampFloat(Number(nextSupir.restoreCfgSTmin), 0, 5)
   nextSupir.colorFix = normalizeSupirColorFix(nextSupir.colorFix, params.value.supir.colorFix)
   setParams({ supir: nextSupir })
 }
@@ -1961,6 +2021,14 @@ function normalizeImageParamPatch(patch: Partial<ImageBaseParams>): Partial<Imag
     )
     next.maskInvert = normalizedMaskToggles.maskInvert
     next.maskRegionSplit = normalizedMaskToggles.maskRegionSplit
+  }
+  if (patch.supir && typeof patch.supir === 'object') {
+    const supirPatch = patch.supir as Partial<SupirModeFormState>
+    next.supir = {
+      ...params.value.supir,
+      ...supirPatch,
+      sampler: normalizeSupirSamplerSelection(supirPatch.sampler, params.value.supir.sampler),
+    }
   }
   return next
 }

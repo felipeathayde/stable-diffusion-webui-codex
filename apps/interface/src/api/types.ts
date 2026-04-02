@@ -9,7 +9,8 @@ Required Notice: see NOTICE
 Purpose: Frontend API DTOs and response/payload types.
 Defines TypeScript interfaces/types for backend responses (models/options/samplers/tasks/events/inventory) and UI-driven schemas (settings schema, UI blocks/presets, tabs/workflows), including options revision/apply metadata fields used by strict generation contracts.
 Inventory DTOs now include first-class IP-Adapter model/image-encoder collections from `/api/models/inventory`, SUPIR diagnostics DTOs from `/api/supir/models`, add-path contracts expose explicit nullable `size_bytes`
-metadata (`number | null`) for byte-progress UX and fail-loud validation in sequential library adds, and engine capabilities include explicit masked-img2img
+metadata (`number | null`) for byte-progress UX and fail-loud validation in sequential library adds. SUPIR diagnostics now include structured
+stable sampler rows (`SupirSamplerInfo`) with backend-owned native sampler/scheduler metadata, and engine capabilities include explicit masked-img2img
 support, SUPIR-mode discoverability, plus the optional nested LTX execution-profile surface used by the current checkpoint-aware LTX defaults lane.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -486,10 +487,18 @@ export interface SupirWeightsDiagnostics {
   found_files: SupirFoundFileDiagnostics[]
 }
 
+export interface SupirSamplerInfo {
+  id: string
+  label: string
+  stability: 'stable' | 'dev'
+  native_sampler: string
+  native_scheduler: string
+}
+
 export interface SupirModelsResponse {
   supir_models: SupirWeightsDiagnostics
   variants: SupirVariantInfo[]
-  samplers: string[]
+  samplers: SupirSamplerInfo[]
   note: string
 }
 

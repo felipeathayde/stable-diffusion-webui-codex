@@ -14,7 +14,8 @@ owner `supir`, and stale legacy `hires.checkpoint` / refiner-embedded `vae` snap
 fields are dropped during hydration instead of being preserved as rename glue. Hires upscaler values are stable ids
 (`latent:*` / `spandrel:*`) for hires-fix wiring, and img2img UI keeps an explicit resize/upscaler layout state (`img2imgResizeMode`,
 `img2imgUpscaler`) decoupled from backend hires dispatch. Image automation, SUPIR mode, and IP-Adapter UI state now stay under canonical owners
-(`runAction`, `initSource`, `supir`, `ipAdapter`) instead of drifting into flat helper fields. WAN video normalization persists no-stretch img2vid guide controls
+(`runAction`, `initSource`, `supir`, `ipAdapter`) instead of drifting into flat helper fields. The nested `supir` owner now also carries the public restore
+window control (`restoreCfgSTmin`) as normalized UI state. WAN video normalization persists no-stretch img2vid guide controls
 (`img2vidImageScale`, `img2vidCropOffsetX`, `img2vidCropOffsetY`) with range normalization, clamps WAN stage schedulers to canonical `simple`,
 backfills blank WAN stage samplers to explicit `uni-pc bh2`, and persists both scheduler/sampler backfills through the normal tab-persistence
 queue without blocking tab hydration. FLUX.2 tabs keep the truthful Klein 4B / base-4B slice contract by capping `textEncoders` to one
@@ -320,6 +321,7 @@ export interface SupirModeFormState {
   sampler: string
   controlScale: number
   restorationScale: number
+  restoreCfgSTmin: number
   colorFix: SupirColorFixMode
 }
 
@@ -685,9 +687,10 @@ function defaultParams<T extends BaseTabType>(
   const supirDefaults: SupirModeFormState = {
     enabled: false,
     variant: 'v0Q',
-    sampler: 'Restore Euler EDM (Stable)',
+    sampler: 'restore_euler_edm_stable',
     controlScale: 0.8,
     restorationScale: 4,
+    restoreCfgSTmin: 0.05,
     colorFix: 'None',
   }
   const imageDefaults: ImageBaseParams = {
@@ -1028,15 +1031,28 @@ function normalizePositiveSupirNumber(rawValue: unknown, fallback: number, maxVa
   return Math.min(maxValue, numeric)
 }
 
+function normalizeNonNegativeSupirNumber(rawValue: unknown, fallback: number, maxValue: number): number {
+  const numeric = Number(rawValue)
+  if (!Number.isFinite(numeric) || numeric < 0) return fallback
+  return Math.min(maxValue, numeric)
+}
+
+export function normalizeSupirSamplerSelection(rawValue: unknown, fallback: string): string {
+  const normalized = String(rawValue || '').trim()
+  if (!normalized) return fallback
+  return normalized
+}
+
 function normalizeSupirModeFormState(rawValue: unknown, defaults: SupirModeFormState): SupirModeFormState {
   const patch = asRecordObject(rawValue)
-  const sampler = String(patch.sampler || '').trim() || defaults.sampler
+  const sampler = normalizeSupirSamplerSelection(patch.sampler, defaults.sampler)
   return {
     enabled: normalizeBoolean(patch.enabled, defaults.enabled),
     variant: normalizeSupirVariant(patch.variant, defaults.variant),
     sampler,
     controlScale: normalizePositiveSupirNumber(patch.controlScale, defaults.controlScale, 2),
     restorationScale: normalizePositiveSupirNumber(patch.restorationScale, defaults.restorationScale, 6),
+    restoreCfgSTmin: normalizeNonNegativeSupirNumber(patch.restoreCfgSTmin, defaults.restoreCfgSTmin, 5),
     colorFix: normalizeSupirColorFixMode(patch.colorFix, defaults.colorFix),
   }
 }

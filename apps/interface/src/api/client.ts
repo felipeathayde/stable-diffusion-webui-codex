@@ -9,7 +9,9 @@ Required Notice: see NOTICE
 Purpose: Frontend API client (typed fetch helpers + endpoint wrappers).
 Provides JSON/Form fetch helpers and exports functions for models/options/inventory/tasks, image automation, UI tabs/workflows persistence, and UI schema/preset
 endpoints under `VITE_API_BASE` (default `/api`). Also caches `/api/options` revision and preserves structured HTTP error metadata (`status/detail/body`)
-for conflict-aware generation UX.
+for conflict-aware generation UX. SUPIR diagnostics parsing now validates the structured stable sampler rows from `/api/supir/models`
+(`id` / `label` / `stability` / `native_sampler` / `native_scheduler`) before the shared frontend diagnostics owner consumes them, and exposes explicit
+cache invalidation so Refresh can truthfully refetch that diagnostics surface in-session.
 Task SSE subscriptions support resume via `after=<event_id>` and expose the latest `lastEventId` for reconnect/replay persistence, including buffered
 `automation_iteration` events from `/api/image-automation`.
 
@@ -24,6 +26,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `ModelsFreshnessMarker` (type): Deterministic model-list freshness marker (`invalidationVersion` + content fingerprint + request id).
 - `fetchModelsWithFreshness` (function): Fetches `/models` with a freshness marker used by stores to avoid stale-response ambiguity.
 - `invalidateModelCatalogCaches` (function): Centralized invalidation for model/inventory caches and invalidation epoch bumps.
+- `invalidateSupirModelsCache` (function): Clears the cached `/api/supir/models` diagnostics payload so Refresh can force a truthful refetch.
 - `fetchModels` (function): Fetches the model list (`/models`).
 - `refreshModels` (function): Forces a checkpoint rescan (`/models?refresh=1`).
 - `fetchModelInventory` (function): Fetches the inventory cache (`/models/inventory`).
@@ -112,6 +115,7 @@ import type {
   InventoryResponse,
   EngineCapabilitiesResponse,
   SupirModelsResponse,
+  SupirSamplerInfo,
   PromptTokenCountRequest,
   PromptTokenCountResponse,
   FileMetadataResponse,
@@ -322,6 +326,10 @@ export function invalidateModelCatalogCaches(): number {
   invalidateJsonCache('/models')
   invalidateJsonCache('/models/inventory')
   return bumpModelsInvalidationVersion()
+}
+
+export function invalidateSupirModelsCache(): void {
+  invalidateJsonCache('/supir/models')
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -856,7 +864,33 @@ export function fetchEngineCapabilities(): Promise<EngineCapabilitiesResponse> {
 }
 
 export function fetchSupirModels(): Promise<SupirModelsResponse> {
-  return requestJsonCached<SupirModelsResponse>('/supir/models')
+  return requestJsonCached<SupirModelsResponse>('/supir/models').then((payload) => {
+    if (!Array.isArray(payload.samplers)) {
+      throw new Error("/api/supir/models returned invalid 'samplers' payload.")
+    }
+    const samplers: SupirSamplerInfo[] = payload.samplers.map((entry, index) => {
+      const row = entry as unknown as Record<string, unknown>
+      const id = String(row.id || '').trim()
+      const label = String(row.label || '').trim()
+      const stability = row.stability === 'dev' ? 'dev' : row.stability === 'stable' ? 'stable' : ''
+      const nativeSampler = String(row.native_sampler || '').trim()
+      const nativeScheduler = String(row.native_scheduler || '').trim()
+      if (!id || !label || !stability || !nativeSampler || !nativeScheduler) {
+        throw new Error(`/api/supir/models returned invalid sampler row at index ${index}.`)
+      }
+      return {
+        id,
+        label,
+        stability,
+        native_sampler: nativeSampler,
+        native_scheduler: nativeScheduler,
+      }
+    })
+    return {
+      ...payload,
+      samplers,
+    }
+  })
 }
 
 export function fetchPromptTokenCount(payload: PromptTokenCountRequest): Promise<PromptTokenCountResponse> {

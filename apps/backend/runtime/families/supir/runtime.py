@@ -10,7 +10,8 @@ Purpose: Canonical SUPIR mode runtime owner for SDXL img2img/inpaint.
 Builds the request-scoped SUPIR sampling runtime on top of the already-loaded SDXL engine:
 - reuse the selected SDXL VAE + text conditioning instead of spawning a parallel pipeline,
 - mount the SUPIR control/UNet branch request-scoped for the canonical img2img owner,
-- run restore sampling through the native sampler driver with a SUPIR-specific post-CFG restore hook,
+- run restore sampling through the backend-owned native sampler/scheduler tuple with a SUPIR-specific post-CFG restore hook,
+- thread the public restore-window knob directly into that restore hook,
 - optionally return pre-decoded color-fixed output so the shared image egress can stay truthful.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -31,28 +32,6 @@ from apps.backend.runtime.processing.datatypes import (
     SamplingPlan,
 )
 from apps.backend.runtime.processing.models import CodexProcessingImg2Img
-
-
-def _resolve_supir_native_sampler(*, sampler_spec: Any) -> tuple[str, str]:
-    from .samplers.types import SupirSamplerId
-
-    sampler_id = getattr(sampler_spec, "sampler_id", None)
-    if sampler_id in {
-        SupirSamplerId.RESTORE_HEUN_EDM_STABLE,
-        SupirSamplerId.RESTORE_HEUN_EDM_DEV,
-    }:
-        return "heun", "karras"
-    if sampler_id in {
-        SupirSamplerId.RESTORE_EULER_EDM_STABLE,
-        SupirSamplerId.RESTORE_EULER_EDM_DEV,
-    }:
-        return "euler", "karras"
-    if sampler_id in {
-        SupirSamplerId.RESTORE_DPMPP2M_STABLE,
-        SupirSamplerId.RESTORE_DPMPP2M_DEV,
-    }:
-        return "dpm++ 2m", "karras"
-    raise RuntimeError(f"Unsupported SUPIR sampler id: {sampler_id!r}")
 
 
 def _conditioning_cache_metadata(processing: CodexProcessingImg2Img) -> dict[str, object]:
@@ -293,14 +272,10 @@ def _build_restore_post_cfg(
     *,
     x_center,
     restoration_scale: float,
-    restore_steps_hint: int,
     restore_cfg_s_tmin: float,
-    restore_structure_only: bool,
-    restore_lpf_ksize: int,
     sigma_max: float,
 ):
     import torch
-    import torch.nn.functional as F
 
     if sigma_max <= 0.0:
         raise RuntimeError(f"SUPIR mode requires a positive sigma_max; got {sigma_max!r}.")
@@ -330,23 +305,11 @@ def _build_restore_post_cfg(
         if restore_cfg_s_tmin > 0.0 and _sigma_scalar(sigma) <= float(restore_cfg_s_tmin):
             return den
         anchor = _expand_like(x_center, den)
-        if restore_steps_hint <= 0:
-            sigma_tensor = torch.as_tensor(sigma, device=den.device, dtype=den.dtype).reshape(-1, 1, 1, 1)
-            if int(sigma_tensor.shape[0]) == 1 and int(den.shape[0]) != 1:
-                sigma_tensor = sigma_tensor.expand(int(den.shape[0]), 1, 1, 1)
-            scale = (sigma_tensor / float(sigma_max)).clamp_min(0.0).pow(float(restoration_scale))
-            return den - (den - anchor) * scale
-
-        if restore_structure_only and int(restore_lpf_ksize) >= 3:
-            kernel = max(3, min(31, int(restore_lpf_ksize) | 1))
-            pad = kernel // 2
-            anchor = F.avg_pool2d(anchor, kernel_size=kernel, stride=1, padding=pad)
-        gain = torch.clamp(
-            torch.as_tensor(float(restoration_scale), device=den.device, dtype=den.dtype),
-            min=0.0,
-            max=1.0,
-        )
-        return den - (den - anchor) * gain
+        sigma_tensor = torch.as_tensor(sigma, device=den.device, dtype=den.dtype).reshape(-1, 1, 1, 1)
+        if int(sigma_tensor.shape[0]) == 1 and int(den.shape[0]) != 1:
+            sigma_tensor = sigma_tensor.expand(int(den.shape[0]), 1, 1, 1)
+        scale = (sigma_tensor / float(sigma_max)).clamp_min(0.0).pow(float(restoration_scale))
+        return den - (den - anchor) * scale
 
     return _apply_restore
 
@@ -485,10 +448,7 @@ def _apply_supir_sampling_session(
         _build_restore_post_cfg(
             x_center=x_center,
             restoration_scale=float(config.restoration_scale),
-            restore_steps_hint=0,
             restore_cfg_s_tmin=float(config.restore_cfg_s_tmin),
-            restore_structure_only=False,
-            restore_lpf_ksize=0,
             sigma_max=float(sigma_max),
         ),
     )
@@ -497,7 +457,8 @@ def _apply_supir_sampling_session(
     original_sampler_name = getattr(processing, "sampler_name", None)
     original_scheduler_name = getattr(processing, "scheduler", None)
     original_sampler = getattr(processing, "sampler", None)
-    mapped_sampler_name, mapped_scheduler_name = _resolve_supir_native_sampler(sampler_spec=config.sampler)
+    mapped_sampler_name = str(config.sampler.native_sampler)
+    mapped_scheduler_name = str(config.sampler.native_scheduler)
     processing.sampler_name = mapped_sampler_name
     processing.scheduler = mapped_scheduler_name
     processing.sampler = CodexSampler(engine, algorithm=mapped_sampler_name)
@@ -583,7 +544,8 @@ def run_supir_img2img(
 
     control_latent, x_center, x_stage1_reference = _build_stage1_reference(engine, source_tensor)
 
-    mapped_sampler_name, mapped_scheduler_name = _resolve_supir_native_sampler(sampler_spec=config.sampler)
+    mapped_sampler_name = str(config.sampler.native_sampler)
+    mapped_scheduler_name = str(config.sampler.native_scheduler)
     supir_plan = replace(
         plan,
         sampler_name=mapped_sampler_name,
@@ -620,6 +582,9 @@ def run_supir_img2img(
     metadata = _conditioning_cache_metadata(processing)
     metadata["supir_variant"] = config.variant.value
     metadata["supir_sampler"] = config.sampler.label
+    metadata["supir_native_sampler"] = mapped_sampler_name
+    metadata["supir_native_scheduler"] = mapped_scheduler_name
+    metadata["supir_restore_cfg_s_tmin"] = float(config.restore_cfg_s_tmin)
     decoded = None
     if str(config.color_fix) != "None":
         decoded = _decode_supir_output(

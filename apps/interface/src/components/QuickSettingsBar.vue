@@ -12,7 +12,8 @@ and commits overrides (device + runtime flags + tab-scoped Z-Image variant) used
 hints now disappear when checkpoint inventory metadata lacks a valid `core_only` flag, preventing stale UI contract display. FLUX.2 stays
 first-class as the current Klein 4B / base-4B slice (single Qwen3-4B selector, backend-capability-driven img2img/inpaint gating, no FLUX.1 aliasing).
 For LTX, QuickSettings remains the owner of mode + checkpoint/VAE/text-encoder selection only; execution-profile defaults are checkpoint-aware
-workspace state, not a second raw sampler/scheduler control surface in the shared header.
+workspace state, not a second raw sampler/scheduler control surface in the shared header. Native SDXL SUPIR mode now also exposes a shared-header toggle here,
+with readiness/blocking resolved from the same diagnostics owner used by the body surface.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `QuickSettingsBar` (component): Main QuickSettings SFC; includes “advanced” UI, per-family subcomponents, and selector filtering logic.
@@ -66,11 +67,13 @@ Symbols (top-level; keep in sync; no ghosts):
 - `onUseInitImageChange` (function): Toggles active image-tab mode between txt2img and img2img from quick settings.
 - `canShowModeToggles` (computed): Enables IMG2IMG/INPAINT quicksettings controls when the active image tab supports img2img.
 - `useMask` (computed): Reflects active image-tab inpaint toggle state (`tab.params.useMask`).
+- `supirEnabled` / `canShowSupirToggle` / `supirSelectionState` (computed): Shared-header SUPIR toggle state, discoverability, and blocking contract for SDXL img2img/inpaint.
 - `supportsInpaint` (computed): Flags whether the active image-tab semantic capability truthfully supports mask/inpaint semantics.
 - `isActiveImageTabRunning` (computed): Tracks whether the active image tab currently has an in-flight generation task.
 - `inpaintToggleDisabled` (computed): Disables INPAINT when the current state cannot be changed safely from quick settings.
 - `inpaintToggleTitle` (computed): Tooltip reason for INPAINT enabled/disabled state.
 - `onUseMaskChange` (function): Toggles inpaint mode (`useMask`) from quick settings with shared-engine support guards.
+- `onSupirModeChange` (function): Toggles native SDXL SUPIR mode from quick settings and forces img2img entry when enabling.
 - `zimageTurbo` (computed): Returns the current Z-Image Turbo toggle state for the active tab.
 - `zimageTurboLocked` (ref): When true, the Z-Image Turbo toggle is fixed by trusted checkpoint metadata.
 - `_trustedZImageVariantFromCheckpointMeta` (function): Extracts `codex.zimage.variant` when metadata is trusted (Codex provenance).
@@ -80,7 +83,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `onAddPathModalAdded` (function): Refreshes quicksettings lists after add-path operations mutate library paths.
 - `onAddPathModalError` (function): Surfaces add-path scan/add failures through quicksettings toasts.
 - `applyInventorySnapshot` (function): Applies one inventory payload to local quicksettings selector sources.
-- `refreshAll` (function): Refreshes models/paths and inventory via the shared store-owned inventory refresh+LoRA hydration flow.
+- `refreshAll` (function): Refreshes models/paths/inventory and reloads shared SUPIR diagnostics when that surface is available.
 - `openPathInputModal` (function): Opens the in-app path input modal and registers async apply behavior.
 - `confirmPathInputModal` (function): Validates/applies modal-entered path values.
 - `closePathInputModal` (function): Closes and clears the in-app path input modal state.
@@ -225,6 +228,17 @@ Symbols (top-level; keep in sync; no ghosts):
               @click="onUseMaskChange(!useMask)"
             >
               INPAINT
+            </button>
+            <button
+              v-if="canShowSupirToggle"
+              :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', supirEnabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+              type="button"
+              :aria-pressed="supirEnabled"
+              :disabled="supirToggleDisabled"
+              :title="supirToggleTitle"
+              @click="onSupirModeChange(!supirEnabled)"
+            >
+              SUPIR
             </button>
           </div>
         </div>
@@ -542,6 +556,7 @@ import type { InventoryResponse, ModelInfo } from '../api/types'
 import { isGenerationRunningForTab } from '../composables/useGeneration'
 import { isLtxGenerationRunningForTab, readPersistedLtxResumeModeForTab } from '../composables/useLtxVideoGeneration'
 import { useResultsCard } from '../composables/useResultsCard'
+import { useSupirDiagnostics, resolveSupirSelectionState } from '../composables/useSupirDiagnostics'
 import {
   normalizeTabFamily,
   semanticEngineFromTabFamily,
@@ -597,6 +612,10 @@ const pathInputModalValue = ref('')
 const pathInputEl = ref<HTMLInputElement | null>(null)
 let pathInputApply: ((value: string) => Promise<void>) | null = null
 const { notice: qsNotice, toast: qsToast } = useResultsCard({ noticeDurationMs: 4000 })
+const {
+  ensureSupirDiagnosticsLoaded: ensureSharedSupirDiagnosticsLoaded,
+  reloadSupirDiagnostics: reloadSharedSupirDiagnostics,
+} = useSupirDiagnostics()
 const isLoadingQuicksettings = ref(false)
 const isQuicksettingsReady = ref(false)
 const isObliteratingVram = ref(false)
@@ -1283,12 +1302,33 @@ const useMask = computed(() => {
   if (!tab) return false
   return Boolean(tab.params.useMask)
 })
+const supirEnabled = computed(() => {
+  const tab = activeImageTab.value
+  if (!tab) return false
+  return Boolean(tab.params.supir.enabled)
+})
 const hasInitImage = computed(() => {
   const tab = activeImageTab.value
   if (!tab) return false
   return String(tab.params.initImageData || '').trim().length > 0
 })
 const supportsInpaint = computed(() => Boolean(activeImageSurface.value?.supports_img2img_masking))
+const canShowSupirToggle = computed(() => (
+  canToggleInitImage.value
+  && activeFamily.value === 'sdxl'
+  && Boolean(activeImageSurface.value?.supports_supir_mode)
+))
+const guidanceAdvancedEnabled = computed(() => {
+  const tab = activeImageTab.value
+  if (!tab) return false
+  return Boolean(tab.params.guidanceAdvanced.enabled)
+})
+const supirSelectionState = computed(() => resolveSupirSelectionState({
+  supported: canShowSupirToggle.value,
+  selectedVariant: activeImageTab.value?.params.supir.variant ?? '',
+  selectedSampler: activeImageTab.value?.params.supir.sampler ?? '',
+  guidanceAdvancedEnabled: guidanceAdvancedEnabled.value,
+}))
 const isActiveImageTabRunning = computed(() => {
   const tab = activeImageTab.value
   if (!tab) return false
@@ -1327,6 +1367,30 @@ const inpaintToggleTitle = computed(() => {
   }
   return 'Toggle INPAINT'
 })
+const supirToggleDisabled = computed(() => (
+  isActiveImageTabRunning.value
+  || (!supirEnabled.value && guidanceAdvancedEnabled.value)
+))
+const supirToggleTitle = computed(() => {
+  if (isActiveImageTabRunning.value) return 'Cannot change SUPIR while generation is running.'
+  if (!canShowSupirToggle.value) return 'SUPIR is only available for native SDXL.'
+  if (!supirEnabled.value && guidanceAdvancedEnabled.value) {
+    return supirSelectionState.value.blockingReason || 'SUPIR mode cannot be enabled while Advanced Guidance/APG is active.'
+  }
+  if (!supirEnabled.value && supirSelectionState.value.blockingReason) {
+    return `Enable SUPIR mode to repair the current selection. ${supirSelectionState.value.blockingReason}`
+  }
+  return supirEnabled.value ? 'Disable SUPIR mode' : 'Enable SUPIR mode'
+})
+
+watch(
+  canShowSupirToggle,
+  (show) => {
+    if (!show) return
+    void ensureSharedSupirDiagnosticsLoaded()
+  },
+  { immediate: true },
+)
 
 const activeWanTab = computed(() => asWanTab(activeModelTab.value))
 
@@ -1548,6 +1612,7 @@ async function refreshAll(): Promise<void> {
     await Promise.all([store.refreshModelsList(), loadPaths()])
     const refreshedInventory = await store.fetchInventoryWithLoraHydration({ refresh: true })
     applyInventorySnapshot(refreshedInventory)
+    await reloadSharedSupirDiagnostics()
   } catch (error) {
     toastQuicksettingsError(error)
   } finally {
@@ -1822,6 +1887,34 @@ async function onUseMaskChange(value: boolean): Promise<void> {
       patch.maskImageName = ''
     }
     await updateImageTabParams(tab.id, patch)
+  } catch (error) {
+    toastQuicksettingsError(error)
+  }
+}
+
+async function onSupirModeChange(value: boolean): Promise<void> {
+  try {
+    const tab = activeImageTab.value
+    if (!tab) return
+    if (isActiveImageTabRunning.value) return
+    if (!value) {
+      await updateImageTabParams(tab.id, {
+        supir: {
+          ...tab.params.supir,
+          enabled: false,
+        },
+      })
+      return
+    }
+    if (!canShowSupirToggle.value) return
+    if (guidanceAdvancedEnabled.value) return
+    await updateImageTabParams(tab.id, {
+      useInitImage: true,
+      supir: {
+        ...tab.params.supir,
+        enabled: true,
+      },
+    })
   } catch (error) {
     toastQuicksettingsError(error)
   }

@@ -33,6 +33,11 @@
   <img src="assets/codex-cli-provenance.svg" width="960" alt="This repository was built entirely through Codex CLI, from GPT-5 foundations to GPT-5.3-Codex maturity: not a single line written by hand." />
 </p>
 
+> [!WARNING]
+> The `dev` branch contains the newest updates and fixes before they are promoted to the stable branch.
+> It may include regressions, incomplete features, or other instabilities.
+> Use it if you want the latest changes and are comfortable with occasional breakage.
+
 ## Preview screenshots
 
 | Launcher (Services tab) | WebUI (SDXL tab) |

@@ -10,6 +10,7 @@ Purpose: Canonical SUPIR mode runtime owner for SDXL img2img/inpaint.
 Builds the request-scoped SUPIR sampling runtime on top of the already-loaded SDXL engine:
 - reuse the selected SDXL VAE + text conditioning instead of spawning a parallel pipeline,
 - mount the SUPIR control/UNet branch request-scoped for the canonical img2img owner,
+- treat the SUPIR variant checkpoint as a bounded `project_modules` overlay plus standalone control-model seam instead of a full second UNet state dict,
 - run restore sampling through the backend-owned native sampler/scheduler tuple with a SUPIR-specific post-CFG restore hook,
 - thread the public restore-window knob directly into that restore hook,
 - optionally return pre-decoded color-fixed output so the shared image egress can stay truthful.
@@ -255,7 +256,7 @@ def _build_supir_runtime_modules(*, base_diffusion_model: Any, variant_checkpoin
     import torch
 
     from apps.backend.runtime.checkpoint.io import load_torch_file
-    from apps.backend.runtime.models.state_dict import safe_load_state_dict, state_dict_has, try_filter_state_dict
+    from apps.backend.runtime.models.state_dict import safe_load_state_dict, try_filter_state_dict
     from apps.backend.runtime.ops.operations import using_codex_operations
 
     from .nn import GLVControl, LightGLVUNet
@@ -306,24 +307,32 @@ def _build_supir_runtime_modules(*, base_diffusion_model: Any, variant_checkpoin
             input_upscale=1,
         ).to(device=construct_device, dtype=construct_dtype)
 
-    missing_base, unexpected_base = safe_load_state_dict(supir_unet, base_diffusion_model.state_dict(), log_name="supir.base_unet")
+    missing_base, unexpected_base = safe_load_state_dict(
+        supir_unet,
+        base_diffusion_model.state_dict(),
+        log_name="supir.base_unet",
+        ignore_missing_prefixes=("project_modules.",),
+    )
     if unexpected_base:
         raise RuntimeError(
             "SUPIR base UNet bootstrap encountered unexpected SDXL keys: "
             f"sample={unexpected_base[:10]}"
         )
-    missing_non_supir = [key for key in missing_base if not str(key).startswith("project_modules.")]
-    if missing_non_supir:
+    if missing_base:
         raise RuntimeError(
             "SUPIR base UNet bootstrap failed; missing non-SUPIR keys after loading the active SDXL UNet: "
-            f"sample={missing_non_supir[:10]}"
+            f"sample={missing_base[:10]}"
         )
 
     variant_state = load_torch_file(str(variant_checkpoint), safe_load=True, device="cpu")
-    unet_state = try_filter_state_dict(variant_state, ("model.diffusion_model.", "diffusion_model."))
+    project_state = try_filter_state_dict(
+        variant_state,
+        ("model.diffusion_model.project_modules.", "diffusion_model.project_modules."),
+    )
     control_state = try_filter_state_dict(variant_state, ("model.control_model.", "control_model."))
 
-    if not state_dict_has(unet_state, "project_modules."):
+    project_first_key = next(iter(project_state.keys()), None)
+    if project_first_key is None:
         raise RuntimeError(
             "SUPIR variant checkpoint is missing the SUPIR UNet adapter seam under an explicit diffusion-model keyspace."
         )
@@ -333,11 +342,15 @@ def _build_supir_runtime_modules(*, base_diffusion_model: Any, variant_checkpoin
             "SUPIR variant checkpoint is missing the SUPIR control-model seam under an explicit control-model keyspace."
         )
 
-    _missing_overlay, unexpected_overlay = safe_load_state_dict(supir_unet, unet_state, log_name="supir.variant_unet")
-    if unexpected_overlay:
+    missing_overlay, unexpected_overlay = safe_load_state_dict(
+        supir_unet.project_modules,
+        project_state,
+        log_name="supir.variant_project_modules",
+    )
+    if missing_overlay or unexpected_overlay:
         raise RuntimeError(
-            "SUPIR variant UNet overlay contains unexpected keys: "
-            f"sample={unexpected_overlay[:10]}"
+            "SUPIR variant project-modules overlay failed (strict): "
+            f"missing_sample={missing_overlay[:10]} unexpected_sample={unexpected_overlay[:10]}"
         )
 
     missing_control, unexpected_control = safe_load_state_dict(control_model, control_state, log_name="supir.control")

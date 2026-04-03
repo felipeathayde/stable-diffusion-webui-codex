@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Canonical video workspace owner for current video families.
-Assembles the shared generic video cards inside the route-owned body, mounts only the active family runtime helper,
+Assembles the shared generic video prompt/init-image/core/stage/output cards inside the route-owned body, mounts only the active family runtime helper,
 and keeps the WAN/LTX family branches under one truthful `VideoModelTab.vue` owner instead of separate family workspaces.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -74,31 +74,16 @@ Symbols (top-level; keep in sync; no ghosts):
               </div>
 
               <div v-if="wan.mode === 'img2vid'" class="mt-3">
-                <div class="gen-card">
-                  <Img2ImgInpaintParamsCard
-                    embedded
-                    :disabled="wan.isRunning"
-                    sectionTitle="Img2Vid Parameters"
-                    sectionSubtitle="Initial image"
-                    initImageLabel="Image"
-                    :initImageData="wan.video.initImageData"
-                    :initImageName="wan.video.initImageName"
-                    :imageWidth="wan.video.width"
-                    :imageHeight="wan.video.height"
-                    :zoomFrameGuide="wan.wanInitImageZoomFrameGuide"
-                    :useMask="false"
-                    maskImageData=""
-                    maskImageName=""
-                    maskEnforcement="per_step_clamp"
-                    :inpaintingFill="1"
-                    :inpaintFullResPadding="0"
-                    :maskBlur="0"
-                    @set:initImage="wan.onInitImageFile"
-                    @clear:initImage="wan.clearInit"
-                    @reject:initImage="wan.onInitImageRejected"
-                    @update:zoom-frame-guide="wan.onZoomFrameGuideUpdate"
-                  />
-                </div>
+                <VideoInitImageCard
+                  :disabled="wan.isRunning"
+                  :initImageData="wan.video.initImageData"
+                  :initImageName="wan.video.initImageName"
+                  :zoomFrameGuide="wan.wanInitImageZoomFrameGuide"
+                  @set:initImage="wan.onInitImageFile"
+                  @clear:initImage="wan.clearInit"
+                  @reject:initImage="wan.onInitImageRejected"
+                  @update:zoom-frame-guide="wan.onZoomFrameGuideUpdate"
+                />
               </div>
             </div>
           </div>
@@ -914,30 +899,16 @@ Symbols (top-level; keep in sync; no ghosts):
               </VideoPromptStageCard>
 
               <div v-if="ltx.mode === 'img2vid'" class="mt-3">
-                <div class="gen-card">
-                  <Img2ImgInpaintParamsCard
-                    embedded
-                    :disabled="ltx.isRunning"
-                    sectionTitle="Img2Vid Parameters"
-                    sectionSubtitle="Initial image"
-                    initImageLabel="Image"
-                    :initImageData="ltx.params.initImageData"
-                    :initImageName="ltx.params.initImageName"
-                    :imageWidth="ltx.params.width"
-                    :imageHeight="ltx.params.height"
-                    :useMask="false"
-                    maskImageData=""
-                    maskImageName=""
-                    maskEnforcement="per_step_clamp"
-                    :inpaintingFill="1"
-                    :inpaintFullResPadding="0"
-                    :maskBlur="0"
-                    @set:initImage="ltx.onInitImageFile"
-                    @clear:initImage="ltx.clearInit"
-                    @reject:initImage="ltx.onInitImageRejected"
-                  />
+                <VideoInitImageCard
+                  :disabled="ltx.isRunning"
+                  :initImageData="ltx.params.initImageData"
+                  :initImageName="ltx.params.initImageName"
+                  @set:initImage="ltx.onInitImageFile"
+                  @clear:initImage="ltx.clearInit"
+                  @reject:initImage="ltx.onInitImageRejected"
+                >
                   <p class="caption mt-2">Generic LTX img2vid currently does not expose denoise strength on `/api/img2vid`.</p>
-                </div>
+                </VideoInitImageCard>
               </div>
             </div>
           </div>
@@ -969,13 +940,14 @@ Symbols (top-level; keep in sync; no ghosts):
                 :min-fps="1"
                 :max-fps="60"
                 :disabled="ltx.isRunning"
-                @update:width="(value) => ltx.updateParamsPatch({ width: ltx.normalizePositiveInt(value, ltx.params!.width, ltx.ltxDimMin, ltx.ltxDimMax) })"
-                @update:height="(value) => ltx.updateParamsPatch({ height: ltx.normalizePositiveInt(value, ltx.params!.height, ltx.ltxDimMin, ltx.ltxDimMax) })"
-                @update:frames="(value) => ltx.updateParamsPatch({ frames: ltx.normalizePositiveInt(value, ltx.params!.frames, ltx.ltxFramesMin, ltx.ltxFramesMax) })"
+                @update:width="(value) => ltx.updateParamsPatch({ width: ltx.normalizeDimensionInput(value, ltx.params!.width) })"
+                @update:height="(value) => ltx.updateParamsPatch({ height: ltx.normalizeDimensionInput(value, ltx.params!.height) })"
+                @update:frames="(value) => ltx.updateParamsPatch({ frames: ltx.normalizeFrameInput(value, ltx.params!.frames) })"
                 @update:fps="(value) => ltx.updateParamsPatch({ fps: ltx.normalizePositiveInt(value, ltx.params!.fps, 1, 240) })"
               >
                 <p class="caption mt-2">{{ ltx.dimensionRuleCaption }}</p>
                 <p v-if="ltx.dimensionWarning" class="panel-status mt-2">{{ ltx.dimensionWarning }}</p>
+                <p v-if="ltx.frameWarning" class="panel-status mt-2">{{ ltx.frameWarning }}</p>
               </VideoCoreParamsCard>
 
               <div class="mt-3">
@@ -1103,9 +1075,12 @@ Symbols (top-level; keep in sync; no ghosts):
             <div class="gen-card mb-3">
               <div class="row-split">
                 <span class="label-muted">Exported Video</span>
-                <a v-if="ltx.videoUrl" class="btn btn-sm btn-outline" :href="ltx.videoUrl" target="_blank" rel="noreferrer">Open</a>
+                <div v-if="ltx.videoUrl" class="results-header-actions">
+                  <button class="btn btn-sm btn-outline" type="button" @click="ltx.openResultVideoZoom">Zoom</button>
+                  <a class="btn btn-sm btn-outline" :href="ltx.videoUrl" target="_blank" rel="noreferrer">Open</a>
+                </div>
               </div>
-              <video v-if="ltx.videoUrl" class="rounded mt-2" :src="ltx.videoUrl" controls />
+              <video v-if="ltx.videoUrl" class="rounded mt-2" :src="ltx.videoUrl" controls @dblclick.prevent.stop />
               <div v-else class="caption mt-2">No exported video yet.</div>
             </div>
 
@@ -1138,6 +1113,12 @@ Symbols (top-level; keep in sync; no ghosts):
               </div>
               <pre class="text-xs break-words mt-2">{{ ltx.formatJson(ltx.info) }}</pre>
             </div>
+            <VideoZoomOverlay
+              :modelValue="ltx.videoZoomOpen"
+              :src="ltx.videoUrl || ''"
+              aria-label="Zoomed LTX result video"
+              @update:modelValue="ltx.setVideoZoomOpen"
+            />
           </ResultsCard>
         </div>
       </section>
@@ -1158,9 +1139,9 @@ Symbols (top-level; keep in sync; no ghosts):
 <script setup lang="ts">
 import { computed, type ComponentPublicInstance } from 'vue'
 
-import Img2ImgInpaintParamsCard from '../components/Img2ImgInpaintParamsCard.vue'
 import ResultViewer from '../components/ResultViewer.vue'
 import VideoCoreParamsCard from '../components/video/VideoCoreParamsCard.vue'
+import VideoInitImageCard from '../components/video/VideoInitImageCard.vue'
 import VideoOutputCard from '../components/video/VideoOutputCard.vue'
 import VideoPromptStageCard from '../components/video/VideoPromptStageCard.vue'
 import VideoStageBasicParamsCard from '../components/video/VideoStageBasicParamsCard.vue'

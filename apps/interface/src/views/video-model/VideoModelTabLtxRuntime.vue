@@ -16,6 +16,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `normalizeExecutionProfileName` (function): Normalizes raw execution-profile names for selector/display checks.
 - `executionProfileLabel` (function): Formats a user-facing label for a known or stale execution profile.
 - `ensureExecutionProfileVisible` (function): Preserves stale persisted execution-profile values in the local selector option list.
+- `normalizeDimensionInput` / `normalizeFrameInput` (functions): Bound LTX geometry/frame edits to the truthful numeric domain without silently snapping alignment.
+- `setVideoZoomOpen` / `openResultVideoZoom` (functions): Parent-facing exported-video zoom visibility bridge setters.
 - `slotProps` (const): Reactive slot-prop bundle exposed to `VideoModelTab.vue`.
 -->
 
@@ -24,7 +26,7 @@ Symbols (top-level; keep in sync; no ghosts):
 </template>
 
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import type { GeneratedImage } from '../../api/types'
 import {
@@ -143,14 +145,22 @@ const dimensionRuleCaption = computed(() => {
 })
 const dimensionWarning = computed(() => {
   const current = params.value
-  if (!current || selectedExecutionProfile.value !== 'two_stage') return ''
-  if (
-    current.width % LTX_TWO_STAGE_FINAL_DIM_ALIGNMENT === 0
-    && current.height % LTX_TWO_STAGE_FINAL_DIM_ALIGNMENT === 0
-  ) {
+  const profile = selectedExecutionProfile.value
+  if (!current || !profile) return ''
+  const requiredAlignment = dimensionAlignment.value
+  if (current.width % requiredAlignment === 0 && current.height % requiredAlignment === 0) {
     return ''
   }
-  return `two_stage requires final width and height divisible by ${LTX_TWO_STAGE_FINAL_DIM_ALIGNMENT}. Current size ${current.width}×${current.height} is blocking.`
+  if (profile === 'two_stage') {
+    return `two_stage requires final width and height divisible by ${LTX_TWO_STAGE_FINAL_DIM_ALIGNMENT}. Current size ${current.width}×${current.height} is blocking.`
+  }
+  return `${executionProfileLabel(profile)} requires width and height divisible by ${requiredAlignment}. Current size ${current.width}×${current.height} is blocking.`
+})
+const frameWarning = computed(() => {
+  const current = params.value
+  if (!current) return ''
+  if ((current.frames - 1) % LTX_FRAME_ALIGNMENT === 0) return ''
+  return `LTX requires frame counts aligned to 8n+1. Current frame count ${current.frames} is blocking.`
 })
 const executionProfileWarning = computed(() => {
   const currentProfile = selectedExecutionProfile.value
@@ -195,6 +205,11 @@ const successMessage = computed(() => {
   if (videoUrl.value) parts.push('Video ready')
   if (frames.value.length > 0) parts.push(`${frames.value.length} frame${frames.value.length === 1 ? '' : 's'} returned`)
   return parts.join(' · ') || 'Task finished.'
+})
+const videoZoomOpen = ref(false)
+
+watch(videoUrl, (currentVideoUrl) => {
+  if (!currentVideoUrl) videoZoomOpen.value = false
 })
 
 watch(
@@ -261,6 +276,14 @@ function normalizeFiniteNumber(rawValue: number, fallback: number, minimum?: num
   return next
 }
 
+function normalizeDimensionInput(rawValue: number, fallback: number): number {
+  return normalizePositiveInt(rawValue, fallback, LTX_DIM_MIN, LTX_DIM_MAX)
+}
+
+function normalizeFrameInput(rawValue: number, fallback: number): number {
+  return normalizePositiveInt(rawValue, fallback, LTX_FRAMES_MIN, LTX_FRAMES_MAX)
+}
+
 function updateParamsPatch(patch: Partial<LtxTabParams>): void {
   store.updateParams(props.tabId, patch as Partial<Record<string, unknown>>).catch((error) => {
     toast(error instanceof Error ? error.message : String(error))
@@ -299,6 +322,15 @@ function clearInit(): void {
   updateParamsPatch({ initImageData: '', initImageName: '' })
 }
 
+function openResultVideoZoom(): void {
+  if (!videoUrl.value) return
+  videoZoomOpen.value = true
+}
+
+function setVideoZoomOpen(value: boolean): void {
+  videoZoomOpen.value = value
+}
+
 function toDataUrl(image: GeneratedImage): string {
   return `data:image/${image.format};base64,${image.data}`
 }
@@ -312,6 +344,7 @@ const slotProps = computed(() => ({
   frames: frames.value,
   info: info.value,
   videoUrl: videoUrl.value,
+  videoZoomOpen: videoZoomOpen.value,
   errorMessage: errorMessage.value,
   isRunning: isRunning.value,
   checkpointCoreOnly: checkpointCoreOnly.value,
@@ -324,6 +357,7 @@ const slotProps = computed(() => ({
   executionProfileCaption: executionProfileCaption.value,
   dimensionRuleCaption: dimensionRuleCaption.value,
   dimensionWarning: dimensionWarning.value,
+  frameWarning: frameWarning.value,
   executionProfileWarning: executionProfileWarning.value,
   checkpointDisplay: checkpointDisplay.value,
   vaeDisplay: vaeDisplay.value,
@@ -340,6 +374,10 @@ const slotProps = computed(() => ({
   onInitImageFile,
   onInitImageRejected,
   clearInit,
+  openResultVideoZoom,
+  setVideoZoomOpen,
+  normalizeDimensionInput,
+  normalizeFrameInput,
   normalizePositiveInt,
   normalizeFiniteNumber,
   copyJson,

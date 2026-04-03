@@ -1,7 +1,7 @@
 <!-- tags: frontend, components, prompt, hires, refiner -->
 # apps/interface/src/components Overview
 Date: 2025-12-06
-Last Review: 2026-04-02
+Last Review: 2026-04-03
 Status: Active
 
 ## Purpose
@@ -47,7 +47,7 @@ Status: Active
 - 2025-12-28: QuickSettings now groups GPU VRAM / Attention Backend / Overrides into a collapsible Advanced row; the obsolete low-bits dtype selectors were removed and Guided gen entrypoint is hidden for now.
 - 2025-12-14: QuickSettings WAN text encoder dropdown now prefers concrete `.safetensors` files under `wan22_tenc`, emitting `wan22/<abs_path>` values that the WAN payload builder normalizes before POSTing.
 - 2025-12-14: WAN tab UI panels live under `components/wan/` (`WanStagePanel.vue`, `WanVideoOutputPanel.vue`) to avoid duplicating High/Low/Output markup in the view.
-- 2026-03-13: Family-owned model-tab workspaces now live under `components/model-tabs/`; route ownership stays in `views/VideoModelTab.vue`.
+- 2026-04-03: `VideoModelTab.vue` is now the canonical baseline video workspace under `views/`, `VideoTabRouteView.vue` is the thin route selector for current video families, `components/model-tabs/WanVideoWorkspace.vue` is frozen as the mechanical source reference, and `LtxVideoWorkspace.vue` remains the live LTX family workspace.
 - 2025-12-15: `VideoSettingsCard.vue` gained a dedicated stylesheet (`styles/components/video-settings-card.css`) and the WAN tab’s parameter sections were restyled to use card layouts consistently.
 - 2025-12-22: `GenerationSettingsCard.vue` now exposes a CFG slider (next to Seed via a flex footer) and moves seed actions (🎲/↺) inside the seed input; `VideoSettingsCard.vue` adds an FPS slider.
 - 2025-12-22: `GenerationSettingsCard.vue` internal layout now uses flex rows (`gc-stack`/`gc-row`) so sliders + buttons aren’t constrained by a single grid template.

@@ -6,24 +6,12 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Family-owned WAN video workspace (txt2vid/img2vid).
-Owns per-stage prompt + init media inputs, stage params, assets selection, guided-generation overlay, and history; submits tasks via `/api/*` and
-renders progress/results via task events (frames and/or exported video), with Run status shown through the shared
-`RunProgressStatus` panel (progress/error/warning/info/success; includes `Stage/Progress/Step/ETA` metadata in progress mode).
-Reuses `Img2ImgInpaintParamsCard` for img2vid init-image input (masking disabled in WAN flows).
-Passes WAN no-stretch zoom frame-guide config (`targetWidth/targetHeight/imageScale/cropOffset`) into the shared init-image card so the zoom overlay can visualize and edit generation-frame projection.
-In img2vid mode, the shared init-image card is presented directly as `Img2Vid Parameters` without an extra wrapper header row.
-Passes the WAN `4n+1` frame contract explicitly into the shared `VideoSettingsCard` instead of relying on shared-component defaults.
-Passes explicit `token-engine="wan"` context to `PromptFields` so prompt token counting uses the WAN tokenizer contract.
-Supports task resume after reload (auto-reattaches to in-flight tasks via SSE replay + snapshot), preserves stage `sampler`/`scheduler` + `flowShift` in history/sync flows,
-and surfaces a one-shot “Reconnected” toast. WAN LoRA insertion is handled via the shared LoRA modal by appending prompt tags;
-payload parsing/LoRA SHA resolution is handled in `useVideoGeneration`.
-Temporal Loom reset-anchor control is rendered as a compact content-width toggle button, and upscaling controls keep the same experimental badge treatment as Temporal Loom.
-Exported result video preview uses an explicit `Zoom` action to open a dedicated full-screen video overlay with pan/zoom, outside-click/Escape close, and double-click fullscreen suppression.
-Uses the shared video-family layout/result styling baseline from `views-shared.css` while keeping WAN-specific guided flow, history, and export tooling local to this workspace.
+Purpose: Frozen source video workspace retained as reference during the baseline-owner cutover.
+This file preserves the copied source implementation unchanged in this tranche so `VideoModelTab.vue` can become the baseline owner while still being provably mechanical.
+Runtime/body logic here stays frozen; only truth-surface sync is allowed in the cutover tranche.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `WanVideoWorkspace` (component): WAN video workspace mounted by `VideoModelTab`.
+- `WanVideoWorkspace` (component): Frozen source video workspace retained as reference during the cutover.
 - `GuidedStep` (type): Guided-generation step definition (message + CSS selector to highlight/focus).
 - `AspectMode` (type): Aspect ratio mode presets for width/height controls.
 - `defaultStage` (function): Returns default WAN stage params (high/low) for new tabs/resets.

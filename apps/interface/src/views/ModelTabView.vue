@@ -7,21 +7,21 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Dynamic model tab view (`/models/:tabId`).
-Loads the selected tab from the tabs store and mounts the canonical route owner for video tabs or `ImageModelTab` for image families,
+Loads the selected tab from the tabs store and mounts the current video route selector or `ImageModelTab` for image families,
 while distinguishing stale route ids from deferred tab-load failures.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ModelTabView` (component): Route view that mounts the correct model tab workspace.
 - `tabLoadFailed` (computed): Tracks whether deferred model-tab loading failed for the current route.
-- `VideoTabType` (type): Video tab types supported by `VideoModelTab`.
-- `videoTabType` (computed): Normalized video tab type passed to `VideoModelTab`.
+- `VideoTabType` (type): Video tab types supported by `VideoTabRouteView`.
+- `videoTabType` (computed): Normalized video tab type passed to `VideoTabRouteView`.
 - `ImageTabType` (type): Non-video tab types supported by `ImageModelTab`.
 - `imageTabType` (computed): Normalized non-video type passed to `ImageModelTab`.
 -->
 
 <template>
   <section v-if="tab">
-    <VideoModelTab v-if="videoTabType" :tab-id="tab.id" :key="tab.id" />
+    <VideoTabRouteView v-if="videoTabType" :tab-id="tab.id" :key="tab.id" />
     <ImageModelTab v-else-if="imageTabType" :tab-id="tab.id" :key="tab.id" :type="imageTabType" />
     <div v-else class="panel">
       <div class="panel-body">Unsupported tab type: {{ tab.type }}</div>
@@ -44,7 +44,7 @@ Symbols (top-level; keep in sync; no ghosts):
 import { computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import ImageModelTab from './ImageModelTab.vue'
-import VideoModelTab from './VideoModelTab.vue'
+import VideoTabRouteView from './VideoTabRouteView.vue'
 import { useBootstrapStore } from '../stores/bootstrap'
 import { useModelTabsStore, type BaseTabType } from '../stores/model_tabs'
 

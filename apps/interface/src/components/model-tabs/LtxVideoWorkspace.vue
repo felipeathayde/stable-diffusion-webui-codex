@@ -7,15 +7,14 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Family-owned LTX video workspace backed by the generic video endpoints.
-Uses the shared video-family presentation baseline so `ltx2` reads like the same 2vid surface as WAN22 while keeping LTX-specific controls
-truthful to the strict LTX generic backend contract (profile-aware `32px` / `64px` geometry, `8n+1` frames, checkpoint-aware execution profiles,
-no silent snapping).
+Uses the shared video presentation structure while keeping LTX-specific controls truthful to the strict LTX generic backend contract
+(profile-aware `32px` / `64px` geometry, `8n+1` frames, checkpoint-aware execution profiles, no silent snapping).
 Stale persisted unsupported execution profiles stay visible as blocking state until the user repairs them. Checkpoint/VAE/text-encoder selection
 stays in QuickSettings; the workspace owns prompt/init-image, generation parameters, run/cancel, progress, exported video, and optional
 returned frames.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `LtxVideoWorkspace` (component): LTX video generation workspace mounted by `VideoModelTab`.
+- `LtxVideoWorkspace` (component): LTX video generation workspace.
 - `ExecutionProfileOption` (type): Workspace-facing execution-profile selector row.
 - `readFileAsDataURL` (function): Reads the selected init image into a data URL.
 - `normalizePositiveInt` (function): Clamps/sanitizes positive integer field updates.

@@ -37,6 +37,7 @@ export const STYLE_TOPOLOGY = Object.freeze([
   styleEntry('apps/interface/src/styles/components/base-tab-header.css', 'component'),
   styleEntry('apps/interface/src/styles/components/prompt-fields.css', 'component'),
   styleEntry('apps/interface/src/styles/components/video-settings-card.css', 'component'),
+  styleEntry('apps/interface/src/styles/components/video-generation-cards.css', 'component'),
   styleEntry('apps/interface/src/styles/components/quicksettings.css', 'component'),
   styleEntry('apps/interface/src/styles/components/quicksettings-overrides-modal.css', 'component'),
   styleEntry('apps/interface/src/styles/components/asset-metadata-modal.css', 'component'),

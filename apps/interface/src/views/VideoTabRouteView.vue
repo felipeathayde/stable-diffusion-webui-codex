@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Temporary route-level selector for current video workspaces under `/models/:tabId`.
-Keeps route selection separate from the baseline video workspace owner while current video families still resolve through different bodies,
+Keeps route selection separate from the baseline video workspace owner while current video families still resolve through the canonical video body,
 and fails loud on impossible tab-type drift.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -18,8 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 <template>
   <section v-if="tab">
-    <VideoModelTab v-if="videoTabType === 'wan'" :tab-id="tab.id" :key="tab.id" />
-    <LtxVideoWorkspace v-else-if="videoTabType === 'ltx2'" :tab-id="tab.id" :key="tab.id" />
+    <VideoModelTab v-if="videoTabType" :tab-id="tab.id" :key="tab.id" />
     <div v-else class="panel">
       <div class="panel-body">Unsupported video tab type: {{ tab.type }}</div>
     </div>
@@ -32,7 +31,6 @@ Symbols (top-level; keep in sync; no ghosts):
 <script setup lang="ts">
 import { computed } from 'vue'
 
-import LtxVideoWorkspace from '../components/model-tabs/LtxVideoWorkspace.vue'
 import VideoModelTab from './VideoModelTab.vue'
 import { useModelTabsStore, type BaseTabType } from '../stores/model_tabs'
 

@@ -802,6 +802,7 @@
   @import './styles/components/base-tab-header.css';
   @import './styles/components/prompt-fields.css';
   @import './styles/components/video-settings-card.css';
+  @import './styles/components/video-generation-cards.css';
   @import './styles/components/quicksettings.css';
   @import './styles/components/quicksettings-overrides-modal.css';
   @import './styles/components/asset-metadata-modal.css';

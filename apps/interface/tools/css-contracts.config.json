@@ -100,9 +100,14 @@
           "rationale": "Image-space crop box projection for the inpaint preview overlay."
         },
         {
+          "file": "apps/interface/src/views/VideoModelTab.vue",
+          "expression": "wan.guidedTooltipStyle",
+          "rationale": "Viewport-aware guided-attention tooltip placement."
+        },
+        {
           "file": "apps/interface/src/components/model-tabs/WanVideoWorkspace.vue",
           "expression": "guidedTooltipStyle",
-          "rationale": "Viewport-aware guided-attention tooltip placement."
+          "rationale": "Frozen WAN reference still owns the viewport-aware guided-attention tooltip placement internally."
         },
         {
           "file": "apps/interface/src/components/ui/ImageZoomOverlay.vue",

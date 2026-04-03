@@ -86,6 +86,10 @@
   "ltx2_loras": [
     "models/ltx2-loras"
   ],
+  "netflix_void_ckpt": [
+    "/mnt/c/Users/lucas/OneDrive/Documentos/stable-diffusion-webui-codex/models/netflix-void"
+  ],
+  "netflix_void_base": [],
   "zimage_ckpt": [
     "models/zimage"
   ],

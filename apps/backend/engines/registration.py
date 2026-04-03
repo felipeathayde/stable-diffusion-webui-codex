@@ -17,6 +17,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `register_flux` (function): Registers the Flux engine.
 - `register_flux2` (function): Registers the FLUX.2 Klein engine.
 - `register_ltx2` (function): Registers the native backend-only LTX2 video engine.
+- `register_netflix_void` (function): Registers the native Netflix VOID vid2vid engine scaffold.
 - `register_kontext` (function): Registers the Flux Kontext engine.
 - `register_chroma` (function): Registers the Chroma engine.
 - `register_wan22_5b` (function): Registers WAN22 GGUF 5B engine and aliases.
@@ -77,6 +78,11 @@ def register_flux2(*, registry: EngineRegistry | None = None, replace: bool = Fa
 def register_ltx2(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:
     from apps.backend.engines.ltx2.ltx2 import Ltx2Engine
     _reg("ltx2", Ltx2Engine, registry=registry, replace=replace, aliases=())
+
+
+def register_netflix_void(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:
+    from apps.backend.engines.netflix_void.netflix_void import NetflixVoidEngine
+    _reg("netflix_void", NetflixVoidEngine, registry=registry, replace=replace, aliases=())
 
 
 def register_kontext(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:

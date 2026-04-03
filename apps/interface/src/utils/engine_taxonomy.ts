@@ -9,7 +9,8 @@ Required Notice: see NOTICE
 Purpose: Canonical frontend engine/tab taxonomy helpers.
 Centralizes tab-family aliases, image request engine-id resolution, backend engine-id -> semantic-engine resolution, and sampler/scheduler
 fallback defaults so stores/composables stop duplicating mapping tables. Fallback sampler/scheduler pairs must stay aligned to the live executable
-surface (for example SD15 now defaults to `ddim` / `ddim`). FLUX.2 stays first-class in frontend taxonomy (no FLUX.1 aliasing).
+surface (for example SD15 now defaults to `ddim` / `ddim`). FLUX.2 stays first-class in frontend taxonomy (no FLUX.1 aliasing), while
+backend-only semantic engines such as `netflix_void` remain valid semantic ids but intentionally resolve to no UI tab family.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `TabFamily` (type): Canonical model tab families used by the UI.
@@ -39,6 +40,7 @@ export type SemanticEngine =
   | 'chroma'
   | 'wan22'
   | 'ltx2'
+  | 'netflix_void'
   | 'hunyuan_video'
   | 'svd'
 
@@ -77,6 +79,7 @@ const SEMANTIC_ENGINE_SET: ReadonlySet<string> = new Set<string>([
   'chroma',
   'wan22',
   'ltx2',
+  'netflix_void',
   'hunyuan_video',
   'svd',
 ])
@@ -144,7 +147,7 @@ export function tabFamilyFromSemanticEngine(value: unknown): TabFamily | null {
   const semantic = normalizeSemanticEngine(value)
   if (!semantic) return null
   if (semantic === 'wan22') return 'wan'
-  if (semantic === 'hunyuan_video' || semantic === 'svd') return null
+  if (semantic === 'hunyuan_video' || semantic === 'svd' || semantic === 'netflix_void') return null
   return semantic
 }
 

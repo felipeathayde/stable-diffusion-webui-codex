@@ -10,7 +10,8 @@ Purpose: Canonical per-engine asset requirements (VAE/text encoders) for generat
 Centralizes “what is required” so UI ↔ API ↔ loader can stay in sync and drift cannot reappear via duplicated `engine_id in (...)` logic.
     Includes sha-selected external-asset engines (e.g., FLUX.2 Klein, LTX2 GGUF core-only, Z-Image, and Anima) where VAE/text-encoder
     weights must be provided explicitly.
-WAN22 engine variants (`wan22_5b`, `wan22_14b`, `wan22_14b_animate`) are modeled as explicit engine contracts with strict owner mapping.
+WAN22 engine variants (`wan22_5b`, `wan22_14b`, `wan22_14b_animate`) are modeled as explicit engine contracts with strict owner mapping, and
+Netflix VOID uses an explicit base-bundle-owned contract (`netflix_void_base` + `netflix_void_ckpt`) with no external VAE/text-encoder slots.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `TextEncoderKind` (enum): UI-friendly label for the expected text encoder selection kind.
@@ -231,6 +232,17 @@ _BASE_CONTRACTS: dict[str, EngineAssetContract] = {
             "pack uses the core-only contract instead."
         ),
     ),
+    "netflix_void": EngineAssetContract(
+        requires_vae=False,
+        tenc_slots=(),
+        tenc_kind=TextEncoderKind.NONE,
+        sha_only=True,
+        notes=(
+            "Base-bundle-owned video inpainting family: tokenizer/text encoder/transformer/vae/scheduler live under "
+            "`netflix_void_base`, while Pass 1/Pass 2 overlays live under `netflix_void_ckpt`. External VAE/text encoders "
+            "are not part of this contract."
+        ),
+    ),
     "svd": EngineAssetContract(
         requires_vae=False,
         tenc_slots=(),
@@ -272,6 +284,7 @@ _CONTRACT_OWNER_BY_ENGINE_ID: dict[str, str] = {
     "wan22_14b": "wan22_14b",
     "wan22_14b_animate": "wan22_14b_animate",
     "ltx2": "ltx2",
+    "netflix_void": "netflix_void",
     "svd": "svd",
     "hunyuan_video": "hunyuan_video",
 }
@@ -286,6 +299,7 @@ _CONTRACT_OWNER_BY_SEMANTIC_ENGINE: dict[str, str] = {
     "anima": "anima",
     "wan22": "wan22_14b",
     "ltx2": "ltx2",
+    "netflix_void": "netflix_void",
     "svd": "svd",
     "hunyuan_video": "hunyuan_video",
 }

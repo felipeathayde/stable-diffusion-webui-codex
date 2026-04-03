@@ -38,6 +38,8 @@ The generic LTX video route now owns its own request contract (checkpoint-owned 
 for `two_stage`, `8n+1` frames, explicit safe defaults, derived `euler` / `simple`, negative-seed random semantics, required `img2vid_init_image`,
 and rejection of WAN-only `*_styles` baggage plus raw LTX `*_sampler` / `*_scheduler` wire keys)
 instead of inheriting WAN `%16` / `4n+1` assumptions.
+Route-level capability validation now also understands `GenerationRouteMode.VID2VID`, and `/api/vid2vid` is reopened only for the
+capability-driven native `netflix_void` lane with mandatory source-video + quadmask staging.
 FLUX.2 img2img now accepts partial denoise (`img2img_denoising_strength != 1.0`) after backend support landed; masked FLUX.2 hires remains an explicit API reject.
 Legacy WAN sampler aliases (`txt2vid_sampling`/`img2vid_sampling`) are rejected; WAN keeps `txt2vid_sampler` and `img2vid_sampler` as its canonical request keys, while LTX derives its fixed runtime lane from explicit `ltx_execution_profile`.
 WAN sampler fields are strict at API parse-time: values must resolve to real WAN22 runtime lanes (`uni-pc` with metadata-compatible optional solver hint, `euler`, or `euler a`); scheduler fields remain strict (`simple`) for WAN22 requests.
@@ -68,7 +70,7 @@ import re
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 from uuid import uuid4
 
 from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
@@ -257,6 +259,22 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
     _LTX2_IMG2VID_GENERIC_ALLOWED_KEYS = (_IMG2VID_GENERIC_ALLOWED_KEYS - _LTX2_GENERIC_BLOCKED_KEYS) | {
         _LTX2_EXECUTION_PROFILE_KEY
     }
+    _NETFLIX_VOID_VID2VID_CORE_KEYS = {
+        "vid2vid_prompt",
+        "vid2vid_video_path",
+        "vid2vid_mask_video_path",
+        "vid2vid_width",
+        "vid2vid_height",
+        "vid2vid_num_frames",
+        "vid2vid_fps",
+        "vid2vid_seed",
+    }
+    _VID2VID_INTERNAL_ALLOWED_KEYS = {"__vid2vid_uploaded_paths", "__vid2vid_uploaded_path"}
+    _NETFLIX_VOID_VID2VID_ALLOWED_KEYS = (
+        (_VIDEO_GENERIC_COMMON_ALLOWED_KEYS - set(WAN_VIDEO_REQUEST_KEYS.GGUF_RUNTIME))
+        | _NETFLIX_VOID_VID2VID_CORE_KEYS
+        | _VID2VID_INTERNAL_ALLOWED_KEYS
+    )
     _WAN_STAGE_ALLOWED_KEYS = set(WAN_VIDEO_REQUEST_KEYS.WAN_STAGE_ALLOWED)
     _WAN_STAGE_LORA_ALLOWED_KEYS = {"sha", "weight"}
     _ER_SDE_OPTION_KEYS = {"solver_type", "max_stage", "eta", "s_noise"}
@@ -2425,6 +2443,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         GenerationRouteMode.IMG2IMG: TaskType.IMG2IMG,
         GenerationRouteMode.TXT2VID: TaskType.TXT2VID,
         GenerationRouteMode.IMG2VID: TaskType.IMG2VID,
+        GenerationRouteMode.VID2VID: TaskType.VID2VID,
     }
     _WAN_VIDEO_ENGINE_KEYS = {"wan22_5b", "wan22_14b", "wan22_14b_animate"}
 
@@ -2474,6 +2493,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             GenerationRouteMode.IMG2IMG: ("supports_img2img", "img2img"),
             GenerationRouteMode.TXT2VID: ("supports_txt2vid", "txt2vid"),
             GenerationRouteMode.IMG2VID: ("supports_img2vid", "img2vid"),
+            GenerationRouteMode.VID2VID: ("supports_vid2vid", "vid2vid"),
         }.get(route_mode, ("", ""))
         if not capability_attr:
             return
@@ -3867,6 +3887,62 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             default_seed=-1,
             default_cfg_scale=7.0,
         )
+
+    def _validate_netflix_void_fixed_choice(*, field_name: str, value: str, expected: str) -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized != expected:
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{field_name}' must be {expected!r} for engine 'netflix_void'; got {value!r}.",
+            )
+        return expected
+
+    def _parse_netflix_void_vid2vid_core_dto(payload: Dict[str, Any]) -> _VideoCoreDTO:
+        from apps.backend.runtime.families.netflix_void.config import (
+            NETFLIX_VOID_DEFAULT_FPS,
+            NETFLIX_VOID_DEFAULT_HEIGHT,
+            NETFLIX_VOID_DEFAULT_MAX_VIDEO_LENGTH,
+            NETFLIX_VOID_DEFAULT_PASS1_CFG,
+            NETFLIX_VOID_DEFAULT_PASS1_STEPS,
+            NETFLIX_VOID_DEFAULT_TEMPORAL_WINDOW,
+            NETFLIX_VOID_DEFAULT_WIDTH,
+        )
+
+        _reject_legacy_wan_request_key_aliases(payload, context="vid2vid")
+        _reject_unknown_keys(payload, _NETFLIX_VOID_VID2VID_ALLOWED_KEYS, "vid2vid")
+        parsed = _parse_video_core_dto(
+            payload,
+            task_prefix="vid2vid",
+            default_width=int(NETFLIX_VOID_DEFAULT_WIDTH),
+            default_height=int(NETFLIX_VOID_DEFAULT_HEIGHT),
+            default_steps=int(NETFLIX_VOID_DEFAULT_PASS1_STEPS),
+            default_fps=int(NETFLIX_VOID_DEFAULT_FPS),
+            default_frames=int(NETFLIX_VOID_DEFAULT_TEMPORAL_WINDOW),
+            default_sampler="ddim",
+            default_scheduler="ddim",
+            expected_unipc_solver_hint=None,
+            sampler_validator=lambda field_name, value: _validate_netflix_void_fixed_choice(
+                field_name=field_name,
+                value=value,
+                expected="ddim",
+            ),
+            scheduler_validator=lambda field_name, value: _validate_netflix_void_fixed_choice(
+                field_name=field_name,
+                value=value,
+                expected="ddim",
+            ),
+            default_seed=-1,
+            default_cfg_scale=float(NETFLIX_VOID_DEFAULT_PASS1_CFG),
+        )
+        if parsed.num_frames > int(NETFLIX_VOID_DEFAULT_MAX_VIDEO_LENGTH):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "'vid2vid_num_frames' exceeds the current netflix_void max video length "
+                    f"({int(NETFLIX_VOID_DEFAULT_MAX_VIDEO_LENGTH)}), got {parsed.num_frames}."
+                ),
+            )
+        return parsed
 
     def _copy_generic_video_asset_selector_fields(*, payload: Mapping[str, Any], extras: Dict[str, Any]) -> None:
         for key in ("model_sha", "checkpoint_core_only", "model_format", "vae_sha", "tenc_sha", "lora_sha"):
@@ -5845,6 +5921,64 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             raise RuntimeError(f"vid2vid {field} not found: {resolved}")
         return str(resolved)
 
+    async def _stage_vid2vid_upload(*, upload: UploadFile, field_name: str, token: str) -> str:
+        try:
+            upload_bytes = await upload.read()
+        except Exception as exc:
+            _router_log.warning("vid2vid %s upload read failed: %s", field_name, exc)
+            raise HTTPException(
+                status_code=400,
+                detail=public_http_error_detail(exc, fallback=f"failed to read {field_name} upload"),
+            ) from None
+        if not upload_bytes:
+            raise HTTPException(status_code=400, detail=f"empty {field_name} upload")
+
+        upload_root = (CODEX_ROOT / ".tmp" / "uploads" / "vid2vid").resolve()
+        upload_root.mkdir(parents=True, exist_ok=True)
+
+        suffix = Path(str(upload.filename or "")).suffix.lower()
+        if not suffix:
+            suffix = ".mp4"
+        staged_path = (upload_root / f"{token}-{field_name}{suffix}").resolve()
+        try:
+            staged_path.relative_to(upload_root)
+        except ValueError as exc:
+            raise HTTPException(status_code=500, detail="Internal upload staging path escaped the vid2vid upload root.") from exc
+
+        try:
+            staged_path.write_bytes(upload_bytes)
+        except Exception as exc:
+            _router_log.warning("vid2vid %s upload staging failed: %s", field_name, exc)
+            raise HTTPException(
+                status_code=500,
+                detail=public_http_error_detail(exc, fallback=f"failed to stage {field_name} upload"),
+            ) from None
+        return str(staged_path)
+
+    def _cleanup_staged_vid2vid_uploads(paths: Sequence[str]) -> None:
+        if not paths:
+            return
+        up_root = (CODEX_ROOT / ".tmp" / "uploads" / "vid2vid").resolve()
+        for item in paths:
+            raw_path = str(item or "").strip()
+            if not raw_path:
+                continue
+            path = Path(raw_path)
+            try:
+                resolved = path.resolve()
+            except Exception:
+                resolved = path
+            try:
+                resolved.relative_to(up_root)
+            except ValueError:
+                continue
+            try:
+                resolved.unlink()
+            except FileNotFoundError:
+                continue
+            except Exception as exc:
+                _router_log.warning("vid2vid route-level upload cleanup failed (%s): %s", str(resolved), exc, exc_info=False)
+
     def _normalize_wan_stage_payload_strict(stage: object, *, field: str) -> object:
         if not isinstance(stage, dict):
             return stage
@@ -5909,10 +6043,126 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         return out
 
     def prepare_vid2vid(payload: Dict[str, Any]) -> Tuple[Vid2VidRequest, str, Optional[str]]:
-        del payload
-        raise NotImplementedError(
-            "vid2vid is temporarily disabled until the capability-driven router/runtime contract is finalized."
+        settings_revision = _require_int_field(payload, "settings_revision", minimum=0)
+        video_engine_key = _canonical_engine_key(payload.get("engine")) if payload.get("engine") is not None else ""
+        use_generic_video_route = not _is_legacy_or_wan_video_route_engine(video_engine_key)
+        if not use_generic_video_route:
+            raise HTTPException(
+                status_code=501,
+                detail="Legacy/WAN vid2vid route parsing is not part of the current capability-driven cutover.",
+            )
+        if video_engine_key != "netflix_void":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Engine '{video_engine_key or '<empty>'}' is unsupported for the current generic vid2vid route.",
+            )
+
+        extras: Dict[str, Any] = {}
+        parsed = _parse_netflix_void_vid2vid_core_dto(payload)
+
+        blocked_selector_fields = ("vae_sha", "vae_source", "tenc_sha", "tenc1_sha", "tenc2_sha")
+        blocked_selector_present = [
+            field_name
+            for field_name in blocked_selector_fields
+            if field_name in payload and payload.get(field_name) not in (None, "", [], {})
+        ]
+        if blocked_selector_present:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Engine 'netflix_void' does not accept external VAE/text-encoder selectors. "
+                    f"Blocked field(s): {', '.join(sorted(blocked_selector_present))}."
+                ),
+            )
+
+        model_ref, _checkpoint_record = _resolve_generic_video_checkpoint_contract(
+            payload=payload,
+            extras=extras,
+            engine_key=video_engine_key,
         )
+
+        video_path = _resolve_vid2vid_input_path(
+            str(payload.get("vid2vid_video_path") or ""),
+            field="video",
+        )
+        mask_video_path = _resolve_vid2vid_input_path(
+            str(payload.get("vid2vid_mask_video_path") or ""),
+            field="mask_video",
+        )
+
+        if "video_return_frames" in payload:
+            raw_return_frames = payload.get("video_return_frames")
+            if raw_return_frames is not None and not isinstance(raw_return_frames, bool):
+                raise HTTPException(status_code=400, detail="'video_return_frames' must be a boolean when provided")
+            if isinstance(raw_return_frames, bool):
+                extras["video_return_frames"] = raw_return_frames
+
+        video_options = None
+        try:
+            from apps.backend.core.params.video import VideoExportOptions
+
+            video_options = VideoExportOptions(
+                filename_prefix=(str(payload.get("video_filename_prefix")).strip() if payload.get("video_filename_prefix") else None),
+                format=(str(payload.get("video_format")).strip() if payload.get("video_format") else None),
+                pix_fmt=(str(payload.get("video_pix_fmt")).strip() if payload.get("video_pix_fmt") else None),
+                crf=(int(payload.get("video_crf")) if payload.get("video_crf") is not None else None),
+                loop_count=(int(payload.get("video_loop_count")) if payload.get("video_loop_count") is not None else None),
+                pingpong=_optional_bool_field(payload, "video_pingpong"),
+                save_metadata=_optional_bool_field(payload, "video_save_metadata"),
+                save_output=_optional_bool_field(payload, "video_save_output"),
+                trim_to_audio=_optional_bool_field(payload, "video_trim_to_audio"),
+            ).as_dict()
+        except HTTPException:
+            raise
+        except Exception as exc:
+            _router_log.warning("vid2vid video export options validation failed: %s", exc)
+            raise HTTPException(
+                status_code=400,
+                detail=public_http_error_detail(exc, fallback="Invalid video export options"),
+            ) from exc
+        if video_options:
+            extras["video"] = {
+                "video_filename_prefix": payload.get("video_filename_prefix"),
+                "video_format": payload.get("video_format"),
+                "video_pix_fmt": payload.get("video_pix_fmt"),
+                "video_crf": payload.get("video_crf"),
+                "video_loop_count": payload.get("video_loop_count"),
+                "video_pingpong": payload.get("video_pingpong"),
+                "video_save_metadata": payload.get("video_save_metadata"),
+                "video_save_output": payload.get("video_save_output"),
+                "video_trim_to_audio": payload.get("video_trim_to_audio"),
+            }
+        video_interpolation = _optional_video_interpolation_field(payload)
+        if video_interpolation is not None:
+            extras["video_interpolation"] = video_interpolation
+        video_upscaling = _optional_video_upscaling_field(payload)
+        if video_upscaling is not None:
+            extras["video_upscaling"] = video_upscaling
+
+        smart_offload, smart_fallback, smart_cache = _resolve_smart_flags()
+        request = Vid2VidRequest(
+            task=TaskType.VID2VID,
+            prompt=parsed.prompt,
+            negative_prompt="",
+            video_path=video_path,
+            mask_video_path=mask_video_path,
+            width=parsed.width,
+            height=parsed.height,
+            steps=parsed.steps,
+            fps=parsed.fps,
+            num_frames=parsed.num_frames,
+            sampler=parsed.sampler_name,
+            scheduler=parsed.scheduler_name,
+            seed=parsed.seed,
+            guidance_scale=parsed.guidance_scale,
+            video_options=video_options,
+            extras=extras,
+            smart_offload=smart_offload,
+            smart_fallback=smart_fallback,
+            smart_cache=smart_cache,
+            settings_revision=settings_revision,
+        )
+        return request, video_engine_key, model_ref
 
     def run_video_task(task_id: str, payload: Dict[str, Any], entry: TaskEntry, task_type: TaskType, *, device: str) -> None:
         from apps.backend.runtime.diagnostics.contract_trace import error_meta
@@ -5932,9 +6182,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             elif task_type == TaskType.IMG2VID:
                 req, engine_key, model_ref = prepare_img2vid(payload)
             elif task_type == TaskType.VID2VID:
-                raise NotImplementedError(
-                    "vid2vid is temporarily disabled until the capability-driven router/runtime contract is finalized."
-                )
+                req, engine_key, model_ref = prepare_vid2vid(payload)
             else:
                 raise RuntimeError(f"Unsupported video task: {task_type}")
             options_snapshot = _opts_snapshot()
@@ -6405,18 +6653,88 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         """Video-to-video endpoint.
 
         Accepts multipart form-data:
-          - video: driving/original video (required for flow_chunks/native; optional for wan_animate)
-          - reference_image: character image (wan_animate only)
-          - pose_video / face_video: preprocessed videos (wan_animate only)
-          - background_video / mask_video: replacement mode only (wan_animate)
-          - payload: JSON string with vid2vid_* keys (and WAN extras)
+          - video: source video upload (optional when `payload.vid2vid_video_path` is used)
+          - mask_video: quadmask video upload (optional when `payload.vid2vid_mask_video_path` is used)
+          - payload: JSON string with the capability-driven `vid2vid_*` keys for `engine="netflix_void"`
 
-        For security, path-based inputs are restricted to the backend working directory.
+        Current-tranche public ownership is limited to the native `netflix_void` lane. Path-based inputs are still
+        restricted to the backend working directory.
         """
-        del video, reference_image, pose_video, face_video, background_video, mask_video, payload
-        raise HTTPException(
-            status_code=501,
-            detail="vid2vid is temporarily disabled until the capability-driven router/runtime contract is finalized.",
+        try:
+            data = json.loads(payload) if payload else {}
+        except Exception as exc:
+            _router_log.warning("vid2vid payload JSON parse failed: %s", exc)
+            raise HTTPException(
+                status_code=400,
+                detail=public_http_error_detail(exc, fallback="payload must be valid JSON"),
+            ) from None
+        if not isinstance(data, dict):
+            raise HTTPException(status_code=400, detail="payload must be JSON object")
+
+        _enforce_generation_settings_contract(data)
+        _validate_route_engine_capability(data, route_mode=GenerationRouteMode.VID2VID)
+        _reject_legacy_wan_request_key_aliases(data, context="vid2vid")
+
+        engine_key = _canonical_engine_key(data.get("engine")) if data.get("engine") is not None else ""
+        if engine_key != "netflix_void":
+            raise HTTPException(
+                status_code=501,
+                detail="The current capability-driven `/api/vid2vid` cutover only supports engine 'netflix_void'.",
+            )
+
+        blocked_uploads = {
+            "reference_image": reference_image,
+            "pose_video": pose_video,
+            "face_video": face_video,
+            "background_video": background_video,
+        }
+        unexpected_uploads = sorted(
+            field_name
+            for field_name, upload in blocked_uploads.items()
+            if upload is not None
         )
+        if unexpected_uploads:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Engine 'netflix_void' does not support these multipart field(s): "
+                    f"{', '.join(unexpected_uploads)}."
+                ),
+            )
+
+        request_token = uuid4().hex
+        uploaded_paths: list[str] = []
+        try:
+            if video is not None:
+                if str(data.get("vid2vid_video_path") or "").strip():
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Provide only one source video input: multipart 'video' or 'vid2vid_video_path'.",
+                    )
+                staged_video_path = await _stage_vid2vid_upload(upload=video, field_name="video", token=request_token)
+                data["vid2vid_video_path"] = staged_video_path
+                uploaded_paths.append(staged_video_path)
+            if mask_video is not None:
+                if str(data.get("vid2vid_mask_video_path") or "").strip():
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Provide only one quadmask input: multipart 'mask_video' or 'vid2vid_mask_video_path'.",
+                    )
+                staged_mask_path = await _stage_vid2vid_upload(upload=mask_video, field_name="mask_video", token=request_token)
+                data["vid2vid_mask_video_path"] = staged_mask_path
+                uploaded_paths.append(staged_mask_path)
+            if uploaded_paths:
+                data["__vid2vid_uploaded_paths"] = list(uploaded_paths)
+
+            device = _parse_explicit_device(data, route_mode=GenerationRouteMode.VID2VID)
+            loop = asyncio.get_running_loop()
+            entry = TaskEntry(loop)
+            task_id = f"task(api-vid2vid-{request_token})"
+            register_task(task_id, entry)
+            run_video_task(task_id, data, entry, TaskType.VID2VID, device=device)
+            return {"task_id": task_id}
+        except Exception:
+            _cleanup_staged_vid2vid_uploads(uploaded_paths)
+            raise
 
     return router

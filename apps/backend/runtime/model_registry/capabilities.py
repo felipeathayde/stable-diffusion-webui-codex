@@ -8,8 +8,9 @@ Required Notice: see NOTICE
 
 Purpose: Semantic engine capability surfaces exposed to the UI layer.
 Defines `SemanticEngine` tags and an `EngineParamSurface` describing which high-level UI sections and tasks are expected to be used for each engine,
-including explicit masked-img2img/inpaint support plus native IP-Adapter/SUPIR discoverability, with executable defaults and recommendation hints for the live surface (for example SD15
-`ddim`/`ddim`, WAN22 `uni-pc bh2`/`simple`, and LTX2 `euler`/`simple` with no sampler fiction beyond the live runtime lane).
+including explicit masked-img2img/inpaint support, vid2vid discoverability, and native IP-Adapter/SUPIR discoverability, with executable defaults and
+recommendation hints for the live surface (for example SD15 `ddim`/`ddim`, WAN22 `uni-pc bh2`/`simple`, and LTX2 `euler`/`simple` with no sampler fiction
+beyond the live runtime lane).
 Includes Anima (`SemanticEngine.ANIMA`) as a flow-based image engine (txt2img/img2img) requiring sha-selected external assets and exposing
 `er sde` in the recommended sampler surface. FLUX.2 exposes the truthful Klein 4B/base-4B slice here: txt2img plus dedicated
 image-conditioned img2img with hires enabled only after the real backend continuation path landed; LoRA remains off.
@@ -18,7 +19,7 @@ WAN semantic capabilities are bound to explicit WAN22 variant families via prima
 Symbols (top-level; keep in sync; no ghosts):
 - `SemanticEngine` (enum): UI-facing semantic engine tags used by API/frontend gating.
 - `GuidanceAdvancedSurface` (dataclass): Optional per-engine support map for advanced CFG/APG controls (`extras.guidance` keys).
-- `EngineParamSurface` (dataclass): Declared parameter surface for an engine (workflow flags including masked img2img/inpaint + IP-Adapter/SUPIR support + optional sampler/scheduler recommendations).
+- `EngineParamSurface` (dataclass): Declared parameter surface for an engine (workflow flags including masked img2img/inpaint, vid2vid, IP-Adapter/SUPIR support, and optional sampler/scheduler recommendations).
 - `ENGINE_SURFACES` (constant): Mapping of semantic engine tag to `EngineParamSurface`.
 - `ENGINE_ID_TO_SEMANTIC_ENGINE` (constant): Canonical mapping from API engine ids to semantic engine tags.
 - `ip_adapter_support_error` (function): Return the fail-loud exact-engine/semantic-engine support error for IP-Adapter, or `None` when supported.
@@ -63,6 +64,7 @@ class SemanticEngine(str, Enum):
     CHROMA = "chroma"
     WAN22 = "wan22"
     LTX2 = "ltx2"
+    NETFLIX_VOID = "netflix_void"
     HUNYUAN_VIDEO = "hunyuan_video"
     SVD = "svd"
 
@@ -103,6 +105,7 @@ class EngineParamSurface:
     supports_controlnet: bool
     supports_ip_adapter: bool
     supports_supir_mode: bool = False
+    supports_vid2vid: bool = False
     # Optional: recommended sampler/scheduler lists for UI hinting.
     recommended_samplers: tuple[str, ...] | None = None
     recommended_schedulers: tuple[str, ...] | None = None
@@ -298,6 +301,23 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
     ),
     # LTX2 distilled/core-only video workflows (txt2vid/img2vid).
     SemanticEngine.LTX2: build_ltx2_capability_surface(),
+    # Netflix VOID: capability-driven native vid2vid public lane.
+    SemanticEngine.NETFLIX_VOID: EngineParamSurface(
+        supports_txt2img=False,
+        supports_img2img=False,
+        supports_img2img_masking=False,
+        supports_txt2vid=False,
+        supports_img2vid=False,
+        supports_hires=False,
+        supports_refiner=False,
+        supports_lora=False,
+        supports_controlnet=False,
+        supports_ip_adapter=False,
+        supports_supir_mode=False,
+        supports_vid2vid=True,
+        default_sampler=None,
+        default_scheduler=None,
+    ),
     # Hunyuan Video: video-only workflows.
     SemanticEngine.HUNYUAN_VIDEO: EngineParamSurface(
         supports_txt2img=False,
@@ -347,6 +367,7 @@ ENGINE_ID_TO_SEMANTIC_ENGINE: Dict[str, SemanticEngine] = {
     "wan22_14b": SemanticEngine.WAN22,
     "wan22_14b_animate": SemanticEngine.WAN22,
     "ltx2": SemanticEngine.LTX2,
+    "netflix_void": SemanticEngine.NETFLIX_VOID,
     "svd": SemanticEngine.SVD,
     "hunyuan_video": SemanticEngine.HUNYUAN_VIDEO,
 }
@@ -381,6 +402,7 @@ _ENGINE_ID_PRIMARY_FAMILY: Dict[str, ModelFamily] = {
     "wan22_14b": ModelFamily.WAN22_14B,
     "wan22_14b_animate": ModelFamily.WAN22_ANIMATE,
     "ltx2": ModelFamily.LTX2,
+    "netflix_void": ModelFamily.NETFLIX_VOID,
     "hunyuan_video": ModelFamily.HUNYUAN,
     "svd": ModelFamily.SVD,
 }

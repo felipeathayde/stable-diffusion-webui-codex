@@ -6,9 +6,9 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Backend vid2vid use-case orchestration (WAN pipeline + optional flow guidance + upscaling/interpolation/export).
-Takes an input video (or frames), runs a chosen vid2vid method (native WAN pipeline or WAN animate), optionally applies optical-flow-based
-warping/guidance plus shared SeedVR2 upscaling/interpolation stages, and returns task events/results.
+Purpose: Backend vid2vid use-case orchestration (native-family dispatch + WAN pipeline + optional flow guidance + upscaling/interpolation/export).
+Takes an input video (or frames), dispatches the active vid2vid family lane (currently native-family scaffolds plus WAN methods), optionally
+applies optical-flow-based warping/guidance plus shared SeedVR2 upscaling/interpolation stages, and returns task events/results.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_build_pipeline_telemetry_scope` (function): Creates a mutable task-scoped telemetry context owner for vid2vid run/stage events.
@@ -22,6 +22,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_as_wan_animate_mode` (function): Normalizes/validates WAN animate mode string (`animate` vs `replace`).
 - `_validate_4n_plus_1` (function): Validates an integer is of the form `4N+1` (common WAN constraints).
 - `_build_result_payload` (function): Builds the final ResultEvent payload (video export descriptor + optional preview frames) and attaches warnings.
+- `_run_netflix_void_vid2vid` (function): Runs the native Netflix VOID vid2vid branch through the family-owned runtime seam.
 - `_run_native_pipeline` (function): Runs the native WAN diffusers pipeline path for vid2vid (requires `comp.pipeline`).
 - `_run_wan_animate` (function): Runs the WAN “animate” path (stage planning + prompt/text guidance; includes nested option handling).
 - `_run_flow_chunks` (function): Applies flow-guided warping in chunks using RAFT and per-frame options (nested loop over frames).
@@ -259,6 +260,17 @@ def _build_result_payload(
             "mime": getattr(video_meta, "mime", None),
         }
     return payload
+
+
+def _run_netflix_void_vid2vid(
+    *,
+    comp: Any,
+    request: Vid2VidRequest,
+) -> Iterator[InferenceEvent]:
+    run_vid2vid = getattr(comp, "run_vid2vid", None)
+    if not callable(run_vid2vid):
+        raise RuntimeError("Netflix VOID vid2vid runtime is missing callable run_vid2vid().")
+    yield from run_vid2vid(request=request)
 
 
 def _run_native_pipeline(
@@ -639,6 +651,10 @@ def run_vid2vid(
 ) -> Iterator[InferenceEvent]:
     logger = getattr(engine, "_logger", None)
     telemetry_scope = _build_pipeline_telemetry_scope(mode="vid2vid")
+    engine_id = str(getattr(engine, "engine_id", "") or "").strip().lower()
+    if engine_id == "netflix_void":
+        yield from _run_netflix_void_vid2vid(comp=comp, request=request)
+        return
     extras = dict(getattr(request, "extras", {}) or {})
     cfg = _extract_vid2vid_options(extras)
     method = str(cfg.get("method") or "flow_chunks").strip().lower()

@@ -9,10 +9,10 @@ Required Notice: see NOTICE
 Purpose: Per-model-family runtime specification (capabilities + latent/normalization defaults).
 Defines UI-facing capability flags and runtime defaults per `ModelFamily` (latent channels, prediction kind, normalization hints),
 acting as the single source of truth for both backend assembly and frontend conditional UI (flow-shift is left unset when variant-specific).
-Includes Anima (`ModelFamily.ANIMA`) as a flow-based image family with fixed flow shift defaults, and FLUX.2 as a
-32-channel flow family whose scheduler shift remains dynamic/variant-aware (`flow_shift=None` here; runtime owns the truthful bridge).
-Includes FLUX.2 (`ModelFamily.FLUX2`) for the truthful Klein 4B/base-4B slice (Qwen-only conditioning, AutoencoderKLFlux2 latent semantics).
-Includes explicit WAN22 family variants (`WAN22_5B`/`WAN22_14B`/`WAN22_ANIMATE`) with independent defaults.
+Includes Anima (`ModelFamily.ANIMA`) as a flow-based image family with fixed flow shift defaults, FLUX.2 as a
+32-channel flow family whose scheduler shift remains dynamic/variant-aware (`flow_shift=None` here; runtime owns the truthful bridge),
+explicit WAN22 family variants (`WAN22_5B`/`WAN22_14B`/`WAN22_ANIMATE`) with independent defaults, and the
+CogVideoX-Fun-backed Netflix VOID vid2vid scaffold (`ModelFamily.NETFLIX_VOID`).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `FamilyCapabilities` (dataclass): UI-facing capability flags (what controls should be shown/hidden; supported/excluded samplers/schedulers).
@@ -104,6 +104,15 @@ CAPABILITIES_FLOW_WITH_CFG = FamilyCapabilities(
     supports_negative_prompt=True,
     supports_cfg=True,
     shows_clip_skip=False,  # Uses T5
+)
+
+CAPABILITIES_NETFLIX_VOID = FamilyCapabilities(
+    supports_negative_prompt=True,
+    supports_cfg=True,
+    shows_clip_skip=False,
+    supported_samplers=("ddim",),
+    supported_schedulers=("ddim",),
+    resolution_step=8,
 )
 
 # Family-level FLUX.2 capabilities cover the supported Klein 4B/base-4B slice as a whole.
@@ -470,6 +479,26 @@ FAMILY_RUNTIME_SPECS: Dict[ModelFamily, FamilyRuntimeSpec] = {
         t5_min_length=512,
         uses_t5=True,
         capabilities=CAPABILITIES_FLOW_WITH_CFG,
+    ),
+    ModelFamily.NETFLIX_VOID: FamilyRuntimeSpec(
+        family=ModelFamily.NETFLIX_VOID,
+        latent_channels=16,
+        latent_scale_factor=8,
+        vae_scaling_factor=1.15258426,
+        vae_shift_factor=0.0,
+        context_dim=4096,
+        uses_pooled_output=False,
+        uses_guidance_embed=False,
+        default_cfg=1.0,
+        prediction=PredictionKind.EPSILON,
+        default_steps=30,
+        scheduler_default="ddim",
+        t5_min_length=226,
+        uses_t5=True,
+        preferred_width=672,
+        preferred_height=384,
+        patch_size=2,
+        capabilities=CAPABILITIES_NETFLIX_VOID,
     ),
     ModelFamily.ZIMAGE: FamilyRuntimeSpec(
         family=ModelFamily.ZIMAGE,

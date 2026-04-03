@@ -9,9 +9,9 @@ Required Notice: see NOTICE
 Purpose: Checkpoint/VAE discovery with sha256 and layout-metadata caching.
 Scans configured model roots (via `apps/paths.json` accessors) for checkpoint and VAE weight files, including file-level checkpoint entries,
 computes sha256 hashes, and maintains a persistent cache in `models/.hashes.json` (schema v2) for fast UI inventory, backend SHA-based
-resolution, CLIP layout metadata reuse, and checkpoint-scoped metadata forwarding such as the current LTX2 execution-profile/default hints.
-Paths config resolution is fail-loud (no silent fallback to defaults on invalid config payloads). Family hints and root selection cover
-SD/Flux/Anima/WAN/ZImage/LTX2 keyspaces while generic VAE inventory excludes audio-bundle files.
+resolution, CLIP layout metadata reuse, and checkpoint-scoped metadata forwarding such as the current LTX2 execution-profile/default hints
+and Netflix VOID overlay pairing readiness. Paths config resolution is fail-loud (no silent fallback to defaults on invalid config payloads).
+Family hints and root selection cover SD/Flux/Anima/WAN/ZImage/LTX2/Netflix VOID keyspaces while generic VAE inventory excludes audio-bundle files.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_default_models_root` (function): Returns the default `models/` directory under `CODEX_ROOT`.
@@ -53,6 +53,7 @@ from apps.backend.runtime.checkpoint.safetensors_header import (
     read_safetensors_header,
 )
 from apps.backend.runtime.model_registry.ltx2_execution import build_ltx2_checkpoint_metadata
+from apps.backend.runtime.model_registry.netflix_void_execution import build_netflix_void_checkpoint_metadata
 
 from .types import (
     CheckpointFormat,
@@ -75,6 +76,7 @@ _CHECKPOINT_ROOT_FAMILY_HINTS: dict[str, str] = {
     "flux1_ckpt": "flux1",
     "flux2_ckpt": "flux2",
     "ltx2_ckpt": "ltx2",
+    "netflix_void_ckpt": "netflix_void",
     "anima_ckpt": "anima",
     "wan22_ckpt": "wan22",
     "zimage_ckpt": "zimage",
@@ -85,6 +87,7 @@ _DEFAULT_CHECKPOINT_ROOTS: tuple[tuple[str, str], ...] = (
     ("flux", "flux1"),
     ("flux2", "flux2"),
     ("ltx2", "ltx2"),
+    ("netflix-void", "netflix_void"),
     ("anima", "anima"),
     ("wan22", "wan22"),
     ("zimage", "zimage"),
@@ -529,6 +532,8 @@ class ModelRegistry:
                         "flux": "flux1",
                         "flux2": "flux2",
                         "ltx2": "ltx2",
+                        "netflix-void": "netflix_void",
+                        "netflix_void": "netflix_void",
                         "zimage": "zimage",
                         "anima": "anima",
                         "wan22": "wan22",
@@ -542,6 +547,20 @@ class ModelRegistry:
             if family_hint == "ltx2":
                 metadata.update(
                     build_ltx2_checkpoint_metadata(
+                        CheckpointRecord(
+                            name=file.stem,
+                            title=file.name,
+                            filename=str(file),
+                            path=str(file.parent),
+                            model_name=file.stem,
+                            format=fmt,
+                            family_hint=family_hint,
+                        )
+                    )
+                )
+            if family_hint == "netflix_void":
+                metadata.update(
+                    build_netflix_void_checkpoint_metadata(
                         CheckpointRecord(
                             name=file.stem,
                             title=file.name,

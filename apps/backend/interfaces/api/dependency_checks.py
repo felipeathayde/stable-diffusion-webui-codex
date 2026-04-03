@@ -10,7 +10,8 @@ Purpose: Backend-owned engine dependency check contract for WebUI readiness surf
 Builds deterministic per-engine check rows from backend inventory/model-registry state so the frontend can render a strict
 "Dependency Check" panel and disable generation when required assets are missing. Semantic-engine asset checks resolve through the
 canonical contract owner seam (`contract_owner_for_semantic_engine`) to prevent drift between API surfaces, including the
-vendored LTX2 metadata/config readiness required by explicit execution profiles.
+vendored LTX2 metadata/config readiness required by explicit execution profiles and the explicit Netflix VOID base-bundle +
+literal overlay-pair readiness contract.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `DependencyCheckRow` (dataclass): One backend dependency row (`id/label/ok/message`) rendered by the frontend.
@@ -21,6 +22,7 @@ Symbols (top-level; keep in sync; no ghosts):
 from __future__ import annotations
 
 from dataclasses import dataclass
+import importlib
 import os
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -33,6 +35,14 @@ from apps.backend.core.contracts.asset_requirements import (
 from apps.backend.infra.config.paths import get_paths_for
 from apps.backend.inventory import cache as inventory_cache
 from apps.backend.runtime.families.ltx2.config import LTX2_VENDOR_REPO_ID, resolve_ltx2_vendor_paths
+from apps.backend.runtime.families.netflix_void.loader import resolve_netflix_void_base_dirs
+from apps.backend.runtime.model_registry.netflix_void_execution import (
+    NETFLIX_VOID_KIND_PASS2,
+    NETFLIX_VOID_KIND_UNKNOWN,
+    netflix_void_checkpoint_kind,
+    netflix_void_record_is_publicly_runnable,
+    netflix_void_record_is_publicly_selectable,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +95,7 @@ _CHECKPOINT_REQUIRED_ENGINES: frozenset[str] = frozenset(
         "zimage",
         "anima",
         "ltx2",
+        "netflix_void",
         "svd",
         "hunyuan_video",
     }
@@ -103,6 +114,7 @@ _CHECKPOINT_ROOT_KEYS_BY_ENGINE: dict[str, tuple[str, ...]] = {
     "anima": ("anima_ckpt",),
     "wan22": ("wan22_ckpt",),
     "ltx2": ("ltx2_ckpt",),
+    "netflix_void": ("netflix_void_ckpt",),
 }
 
 _CHECKPOINT_FAMILY_HINTS_BY_ENGINE: dict[str, tuple[str, ...]] = {
@@ -115,6 +127,7 @@ _CHECKPOINT_FAMILY_HINTS_BY_ENGINE: dict[str, tuple[str, ...]] = {
     "anima": ("anima",),
     "wan22": ("wan22",),
     "ltx2": ("ltx2",),
+    "netflix_void": ("netflix_void",),
 }
 
 _VAE_ROOT_KEYS_BY_CONTRACT_OWNER: dict[str, tuple[str, ...]] = {
@@ -138,7 +151,6 @@ _TEXT_ENCODER_ROOT_KEYS_BY_CONTRACT_OWNER: dict[str, tuple[str, ...]] = {
     "wan22_14b_animate": ("wan22_tenc",),
     "ltx2": ("ltx2_tenc",),
 }
-
 
 def _count_list_entries(value: object) -> int:
     if not isinstance(value, list):
@@ -185,6 +197,31 @@ def _ltx2_vendored_metadata_check() -> DependencyCheckRow:
             "component_configs=text_encoder|scheduler|connectors|transformer|vae|audio_vae|vocoder. "
             "The explicit two_stage lane additionally requires latent_upsampler/config.json."
         ),
+    )
+
+
+def _netflix_void_warped_noise_runtime_check() -> DependencyCheckRow:
+    missing_modules: list[str] = []
+    for module_name in ("torch", "torchvision"):
+        try:
+            importlib.import_module(module_name)
+        except Exception:
+            missing_modules.append(module_name)
+    if missing_modules:
+        return DependencyCheckRow(
+            id="warped_noise_runtime",
+            label="Warped-Noise Runtime",
+            ok=False,
+            message=(
+                "Netflix VOID warped-noise runtime is unavailable because required Python modules failed to import: "
+                f"{', '.join(missing_modules)}."
+            ),
+        )
+    return DependencyCheckRow(
+        id="warped_noise_runtime",
+        label="Warped-Noise Runtime",
+        ok=True,
+        message="Netflix VOID warped-noise runtime dependencies are importable (torch + torchvision).",
     )
 
 
@@ -465,6 +502,85 @@ def build_engine_dependency_checks(
                     ),
                 )
             )
+
+        if semantic_engine == "netflix_void":
+            base_dirs = list(resolve_netflix_void_base_dirs())
+            checks.append(
+                DependencyCheckRow(
+                    id="base_bundle",
+                    label="Base Bundle",
+                    ok=len(base_dirs) == 1,
+                    message=(
+                        f"Exactly one Netflix VOID base bundle discovered: {base_dirs[0]}."
+                        if len(base_dirs) == 1
+                        else (
+                            "No Netflix VOID base bundle discovered. Configure `netflix_void_base` with one directory containing "
+                            "model_index.json + scheduler/text_encoder/tokenizer/transformer/vae."
+                            if len(base_dirs) == 0
+                            else (
+                                "Multiple Netflix VOID base bundles discovered. Keep exactly one valid directory under "
+                                f"`netflix_void_base`: {base_dirs!r}"
+                            )
+                        )
+                    ),
+                )
+            )
+
+            selectable_records = [record for record in scoped_records if netflix_void_record_is_publicly_selectable(record)]
+            runnable_records = [record for record in scoped_records if netflix_void_record_is_publicly_runnable(record)]
+            unknown_records = [
+                str(getattr(record, "filename", "") or "").strip()
+                for record in scoped_records
+                if netflix_void_checkpoint_kind(record) == NETFLIX_VOID_KIND_UNKNOWN
+            ]
+            pass2_only_records = [
+                str(getattr(record, "filename", "") or "").strip()
+                for record in scoped_records
+                if netflix_void_checkpoint_kind(record) == NETFLIX_VOID_KIND_PASS2
+            ]
+            overlay_pair_ok = (
+                len(selectable_records) == 1
+                and len(runnable_records) == 1
+                and len(unknown_records) == 0
+            )
+            if overlay_pair_ok:
+                overlay_message = (
+                    "Netflix VOID literal overlay pair ready: public selector "
+                    f"{str(getattr(selectable_records[0], 'filename', '') or '')!r} + sibling `void_pass2.safetensors`."
+                )
+            elif unknown_records:
+                overlay_message = (
+                    "Netflix VOID checkpoint inventory contains unsupported or ambiguously named files under the scoped roots: "
+                    f"{unknown_records!r}. Keep only literal `void_pass1.safetensors` / `void_pass2.safetensors` pair members."
+                )
+            elif len(selectable_records) == 0 and pass2_only_records:
+                overlay_message = (
+                    "Netflix VOID Pass 2 overlay(s) were discovered without a public Pass 1 selector. Add literal sibling "
+                    f"`void_pass1.safetensors` next to the Pass 2 file(s): {pass2_only_records!r}"
+                )
+            elif len(selectable_records) == 0:
+                overlay_message = (
+                    "No public Netflix VOID Pass 1 overlay discovered. Add literal `void_pass1.safetensors` plus sibling "
+                    "`void_pass2.safetensors` under `netflix_void_ckpt`."
+                )
+            elif len(selectable_records) > 1:
+                overlay_message = (
+                    "Multiple public Netflix VOID Pass 1 overlays discovered. Tranche A supports exactly one literal sibling pair: "
+                    f"{[str(getattr(record, 'filename', '') or '') for record in selectable_records]!r}"
+                )
+            else:
+                overlay_message = (
+                    "Netflix VOID Pass 1 overlay is missing literal sibling `void_pass2.safetensors` in the same directory."
+                )
+            checks.append(
+                DependencyCheckRow(
+                    id="overlay_pair",
+                    label="Overlay Pair",
+                    ok=overlay_pair_ok,
+                    message=overlay_message,
+                )
+            )
+            checks.append(_netflix_void_warped_noise_runtime_check())
 
         contract_engine = contract_owner_for_semantic_engine(semantic_engine)
         contract = contract_for_engine(contract_engine)

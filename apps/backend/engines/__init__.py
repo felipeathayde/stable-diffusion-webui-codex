@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Engine package facade and default registration entry points.
 Exposes `register_default_engines(...)` and lazily resolves optional/large engine classes to avoid heavy imports during startup.
-Includes the Anima, FLUX.2, and staged LTX2 engine facades (registered under engine ids `anima` / `flux2` / `ltx2`).
+Includes the Anima, FLUX.2, staged LTX2, and staged Netflix VOID engine facades (registered under engine ids
+`anima` / `flux2` / `ltx2` / `netflix_void`).
 
 Symbols (top-level; keep in sync; no ghosts):
 - `EngineLoadError` (class): Error raised when an engine fails to load required resources.
@@ -36,6 +37,7 @@ if TYPE_CHECKING:
     from typing import Any as Flux
     from typing import Any as Flux2Engine
     from typing import Any as Ltx2Engine
+    from typing import Any as NetflixVoidEngine
     from typing import Any as Kontext
     from typing import Any as StableDiffusion
     from typing import Any as StableDiffusion2
@@ -73,6 +75,7 @@ def register_default_engines(*, registry: EngineRegistry | None = None, replace:
     _maybe_register("flux1", registration.register_flux)
     _maybe_register("flux2", registration.register_flux2)
     _maybe_register("ltx2", registration.register_ltx2)
+    _maybe_register("netflix_void", registration.register_netflix_void)
     _maybe_register("flux1_kontext", registration.register_kontext)
     _maybe_register("flux1_chroma", registration.register_chroma)
     _maybe_register("sd20", registration.register_sd20)
@@ -96,6 +99,7 @@ __all__ = [
     "Flux",
     "Flux2Engine",
     "Ltx2Engine",
+    "NetflixVoidEngine",
     "Kontext",
     "Chroma",
     "ZImageEngine",
@@ -114,6 +118,7 @@ _ENGINE_EXPORTS = {
     "Flux": ("apps.backend.engines.flux.flux", "Flux"),
     "Flux2Engine": ("apps.backend.engines.flux2.flux2", "Flux2Engine"),
     "Ltx2Engine": ("apps.backend.engines.ltx2.ltx2", "Ltx2Engine"),
+    "NetflixVoidEngine": ("apps.backend.engines.netflix_void.netflix_void", "NetflixVoidEngine"),
     "Kontext": ("apps.backend.engines.flux.kontext", "Kontext"),
     "Chroma": ("apps.backend.engines.flux.chroma", "Chroma"),
     "ZImageEngine": ("apps.backend.engines.zimage.zimage", "ZImageEngine"),

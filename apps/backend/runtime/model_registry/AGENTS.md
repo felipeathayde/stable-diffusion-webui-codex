@@ -1,6 +1,6 @@
 # Model Registry (Work in Progress)
 Date: 2025-10-28
-Last Review: 2026-03-31
+Last Review: 2026-04-03
 Status: Draft
 
 ## Purpose
@@ -28,6 +28,8 @@ Status: Draft
 - 2026-02-18: `EngineParamSurface` now includes optional `guidance_advanced` per-engine support flags (`apg_*`, `guidance_rescale`, `cfg_trunc_ratio`, `renorm_cfg`) so frontend CFG-Advanced UI can be gated by backend contract (including partial per-control support).
 - 2026-02-20: Removed semantic-engine map entry for `wan22_14b_native`; WAN22 14B semantic ownership is now single-key (`wan22_14b`).
 - 2026-02-20: WAN22 animate semantic/loader key was renamed to `wan22_14b_animate` (old `wan22_animate_14b` removed).
+- 2026-04-03: Added the metadata-only `netflix_void_execution.py` seam as the sole public owner for Netflix VOID checkpoint-kind classification (`pass1|pass2|unknown`) and literal sibling pair readiness. Runtime/engine assembly must consume that metadata instead of introducing a second detector/alias lane.
+- 2026-04-03: Added `ModelFamily.NETFLIX_VOID` plus a family runtime spec so primary-family capability lookups stay fail-loud once the staged `netflix_void` engine is registered. The semantic engine surface remains discovery-only until `supports_vid2vid=true` and the native runtime cutover land together.
 - 2026-02-21: `capabilities.engine_supports_cfg(engine_id)` now resolves family from explicit `engine_id -> ModelFamily` mapping (including WAN22 variants) instead of semantic-primary-family fallback, removing hidden `wan22 -> WAN22_5B` drift at capability checks.
 - 2026-03-28: `capabilities.primary_family_for_engine_id(engine_id)` is the canonical runtime owner for exact same-family checks. `SemanticEngine` remains UI/workflow gating only and must not be reused as proof for strict family-equality runtime contracts such as exact top-level `swap_model` resume.
 - 2026-03-31: `EngineParamSurface` now includes explicit `supports_img2img_masking`; frontend img2img/inpaint gating and the `/api/img2img` router must consume that backend semantic-engine truth instead of carrying local engine-id blocklists.

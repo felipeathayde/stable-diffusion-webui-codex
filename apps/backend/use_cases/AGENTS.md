@@ -23,6 +23,7 @@ Status: Active
 - 2026-01-22: `txt2img.py` now includes a canonical event wrapper (`run_txt2img`) used by engines to keep mode orchestration in the use-case layer (Option A).
 - 2025-12-16: `vid2vid.py` implemented WAN22 video-to-video orchestration (decode input video via ffmpeg, flow-guided chunking, optional VFI, export + metadata), plus a `vid2vid_method="wan_animate"` path that runs Diffusers `WanAnimatePipeline` from preprocessed pose/face videos + reference image.
 - 2026-02-28: Router contract currently gates `/api/vid2vid` as disabled (HTTP 501/NotImplemented) pending capability-driven finalize/re-enable pass.
+- 2026-04-03: `vid2vid.py` now reserves the earliest family-native branch for `netflix_void` before WAN method parsing or diffusers telemetry emission. The staged engine/runtime seam still fails loud until the native Pass 1 -> warped-noise -> Pass 2 execution path is ported, but the canonical use-case owner is now ready for that branch.
 - 2026-01-02: Added standardized file header docstrings to use case modules (doc-only change; part of rollout).
 - 2026-01-03: Added standardized file header docstrings to remaining use case modules (`__init__.py`, `img2vid.py`, `txt2img.py`, `txt2vid.py`) (doc-only change; part of rollout).
 - 2026-01-26: Smart offload pre-conditioning cleanup now ensures denoiser/VAE are not left resident when conditioning starts (txt2img runner + img2img).

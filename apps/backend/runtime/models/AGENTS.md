@@ -1,7 +1,7 @@
 # Runtime Models — AGENTS Notes
 <!-- tags: runtime, models, loader, prediction -->
 Date: 2025-12-05
-Last Review: 2026-03-25
+Last Review: 2026-04-02
 Status: Active
 
 ## Scope
@@ -34,6 +34,7 @@ Applies to `apps/backend/runtime/models/*` including `loader.py`, `registry.py`,
 - Missing/Unexpected above thresholds will be escalated by the loader; we do not degrade silently.
 - SDXL: UNet/VAE/CLIP loads are strict — any missing/unexpected keys are fatal.
 - Prefer clear messages naming a few representative keys and the active keyspace-resolution path.
+- `safe_load_state_dict(...)` may suppress caller-declared allowed-missing prefixes only for already-proven staged partial-load seams; it must not be used to hide cross-keyspace incompatibility, wrapper-prefix drift, or renamed stored keys.
 
 ## Rationale
 - Keyspace interpretation converges on Diffusers-style text encoder keys: converts legacy resblocks to `text_model.*` and accepts plain `text_model.*` roots without treating key rewriting as an allowed runtime operation.

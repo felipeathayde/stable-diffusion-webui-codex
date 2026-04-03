@@ -43,13 +43,22 @@ def _conditioning_cache_metadata(processing: CodexProcessingImg2Img) -> dict[str
 
 def _resolve_loaded_sdxl_checkpoint(engine: Any) -> Path:
     bundle = getattr(engine, "_current_bundle", None)
-    source = str(getattr(bundle, "source", "") or "").strip()
-    if not source:
-        raise RuntimeError("SUPIR mode requires an engine with a loaded SDXL checkpoint bundle source.")
-    path = Path(source).expanduser()
-    if not path.is_file():
-        raise RuntimeError(f"SUPIR mode requires a file-backed SDXL checkpoint; loaded source is not a file: {path}")
-    return path
+    model_ref = str(getattr(bundle, "model_ref", "") or "").strip()
+    if not model_ref:
+        raise RuntimeError("SUPIR mode requires an engine with a loaded SDXL checkpoint bundle model_ref.")
+    path = Path(model_ref).expanduser()
+    if path.is_file():
+        return path
+    bundle_source = str(getattr(bundle, "source", "") or "").strip() or "unknown"
+    if path.is_dir():
+        raise RuntimeError(
+            "SUPIR mode requires a file-backed SDXL checkpoint; "
+            f"loaded bundle model_ref is a directory: {path} (bundle_source={bundle_source})"
+        )
+    raise RuntimeError(
+        "SUPIR mode requires a file-backed SDXL checkpoint; "
+        f"loaded bundle model_ref is not a file: {path} (bundle_source={bundle_source})"
+    )
 
 
 def _resolve_supir_variant_checkpoint(variant: Any) -> Path:

@@ -2,7 +2,7 @@
 
 # apps/backend/runtime/families/supir Overview
 Date: 2026-02-02
-Last Review: 2026-04-01
+Last Review: 2026-04-02
 Status: In progress
 
 ## Purpose
@@ -27,3 +27,4 @@ Status: In progress
 - 2026-03-31: `/api/supir/models` is diagnostics-only; live SUPIR generation is owned by canonical SDXL `img2img.py`, not a standalone `/api/supir/enhance` route/task.
 - 2026-04-01: the public/native SUPIR restore surface is currently bounded to `restoreCfgSTmin`; do not expose or accept structure-only / LPF knobs again until `runtime.py` owns a truthful non-placeholder execution path for them.
 - 2026-04-02: `runtime.py::_resolve_loaded_sdxl_checkpoint(...)` must resolve the live checkpoint file from `engine._current_bundle.model_ref`; `bundle.source` is the bundle materialization format (`state_dict` / `diffusers`), not the filesystem path of the loaded SDXL base checkpoint.
+- 2026-04-02: `runtime.py::_build_supir_runtime_modules(...)` must translate the active SDXL UNet `codex_config.transformer_depth` into GLVControl's per-level contract before constructing `nn/control.py`; the common UNet config stores SDXL depth per block (`[0,0,2,2,10,10]`-style), while `GLVControl` expects one uniform depth per encoder level (`[0,2,10]`-style) and should fail loud if a level is non-uniform.

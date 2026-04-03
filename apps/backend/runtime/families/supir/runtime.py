@@ -15,6 +15,18 @@ Builds the request-scoped SUPIR sampling runtime on top of the already-loaded SD
 - optionally return pre-decoded color-fixed output so the shared image egress can stay truthful.
 
 Symbols (top-level; keep in sync; no ghosts):
+- `_conditioning_cache_metadata` (function): Publish SUPIR-specific metadata for conditioning cache hits.
+- `_resolve_loaded_sdxl_checkpoint` (function): Resolve the active file-backed SDXL base checkpoint from the loaded engine bundle.
+- `_resolve_supir_variant_checkpoint` (function): Resolve the selected SUPIR variant weights checkpoint path.
+- `_ensure_supir_vae_seam` (function): Validate that the loaded SDXL engine exposes the required VAE seam.
+- `_use_supir_vae` (function): Load and, when needed, unload the active VAE memory target for one bounded stage.
+- `_encode_first_stage_with_denoise` (function): Build the Stage-1 latent/reference pair with optional denoise.
+- `_build_stage1_reference` (function): Construct the SUPIR Stage-1 reference tensor from the encoded input.
+- `_resolve_supir_control_transformer_depth` (function): Translate SDXL per-block transformer depth into GLVControl's per-level contract.
+- `_build_supir_runtime_modules` (function): Build the request-scoped SUPIR UNet and control modules on top of the loaded SDXL base.
+- `_build_restore_post_cfg` (function): Build the SUPIR restore post-CFG hook from the public restore window settings.
+- `_apply_supir_sampling_session` (function): Mount the bounded SUPIR sampling session and restore engine state afterward.
+- `_decode_supir_output` (function): Decode SUPIR samples back into image-space output with the selected color-fix path.
 - `run_supir_img2img` (function): Execute one bounded SUPIR-mode img2img/inpaint pass through the canonical owner path.
 """
 
@@ -180,6 +192,65 @@ def _build_stage1_reference(engine: Any, source_tensor):
     return control_latent, anchor_latent, x_stage1_reference
 
 
+def _resolve_supir_control_transformer_depth(base_config: Any) -> int | tuple[int, ...]:
+    channel_mult = tuple(int(value) for value in getattr(base_config, "channel_mult", ()) or ())
+    if not channel_mult:
+        raise RuntimeError("SUPIR mode requires a UNet codex_config with non-empty channel_mult.")
+
+    raw_transformer_depth = getattr(base_config, "transformer_depth", 0)
+    if isinstance(raw_transformer_depth, int):
+        return int(raw_transformer_depth)
+
+    transformer_depth_values = tuple(int(value) for value in raw_transformer_depth)
+    if len(transformer_depth_values) == 1:
+        return int(transformer_depth_values[0])
+    if len(transformer_depth_values) == len(channel_mult):
+        return transformer_depth_values
+
+    if hasattr(base_config, "expanded_num_res_blocks"):
+        num_res_blocks_per_level = tuple(int(value) for value in base_config.expanded_num_res_blocks())
+    else:
+        raw_num_res_blocks = getattr(base_config, "num_res_blocks", ())
+        if isinstance(raw_num_res_blocks, int):
+            num_res_blocks_per_level = tuple(int(raw_num_res_blocks) for _ in channel_mult)
+        else:
+            num_res_blocks_per_level = tuple(int(value) for value in raw_num_res_blocks)
+            if len(num_res_blocks_per_level) == 1:
+                num_res_blocks_per_level = tuple(num_res_blocks_per_level[0] for _ in channel_mult)
+
+    if len(num_res_blocks_per_level) != len(channel_mult):
+        raise RuntimeError(
+            "SUPIR mode could not resolve per-level num_res_blocks from the active SDXL codex_config: "
+            f"num_res_blocks={num_res_blocks_per_level!r} channel_mult={channel_mult!r}"
+        )
+
+    total_transformer_blocks = sum(num_res_blocks_per_level)
+    if len(transformer_depth_values) != total_transformer_blocks:
+        raise RuntimeError(
+            "SUPIR mode could not translate the active SDXL transformer_depth into GLVControl per-level form: "
+            f"transformer_depth={transformer_depth_values!r} num_res_blocks={num_res_blocks_per_level!r}"
+        )
+
+    per_level_depths: list[int] = []
+    offset = 0
+    for level_index, block_count in enumerate(num_res_blocks_per_level):
+        level_values = transformer_depth_values[offset : offset + block_count]
+        offset += block_count
+        if not level_values:
+            raise RuntimeError(
+                "SUPIR mode found an empty transformer-depth slice while translating the active SDXL codex_config: "
+                f"level={level_index} num_res_blocks={num_res_blocks_per_level!r}"
+            )
+        first_value = int(level_values[0])
+        if any(int(value) != first_value for value in level_values[1:]):
+            raise RuntimeError(
+                "SUPIR mode requires uniform transformer_depth within each encoder level for GLVControl: "
+                f"level={level_index} values={tuple(int(value) for value in level_values)!r}"
+            )
+        per_level_depths.append(first_value)
+    return tuple(per_level_depths)
+
+
 def _build_supir_runtime_modules(*, base_diffusion_model: Any, variant_checkpoint: Path) -> tuple[Any, Any]:
     import torch
 
@@ -193,6 +264,7 @@ def _build_supir_runtime_modules(*, base_diffusion_model: Any, variant_checkpoin
     if base_config is None:
         raise RuntimeError("SUPIR mode requires the active SDXL UNet to expose codex_config.")
     unet_kwargs = asdict(base_config)
+    control_transformer_depth = _resolve_supir_control_transformer_depth(base_config)
 
     base_parameter = next(base_diffusion_model.parameters(), None)
     if base_parameter is None:
@@ -223,7 +295,7 @@ def _build_supir_runtime_modules(*, base_diffusion_model: Any, variant_checkpoin
             use_scale_shift_norm=bool(unet_kwargs["use_scale_shift_norm"]),
             resblock_updown=bool(unet_kwargs["resblock_updown"]),
             use_spatial_transformer=bool(unet_kwargs["use_spatial_transformer"]),
-            transformer_depth=unet_kwargs["transformer_depth"],
+            transformer_depth=control_transformer_depth,
             context_dim=unet_kwargs["context_dim"],
             disable_self_attentions=unet_kwargs["disable_self_attentions"],
             num_attention_blocks=unet_kwargs["num_attention_blocks"],

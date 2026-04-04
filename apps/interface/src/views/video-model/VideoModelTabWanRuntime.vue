@@ -1050,6 +1050,12 @@ watch(
   { immediate: true },
 )
 
+function onSelectHistoryStripItem(item: { taskId: string }): void {
+  const match = history.value.find((entry) => entry.taskId === item.taskId)
+  if (!match) return
+  openHistoryDetails(match)
+}
+
 type GuidedStep = { id: string; message: string; selector: string; focusSelector?: string }
 const guidedActive = ref(false)
 const guidedMessage = ref('')
@@ -2018,6 +2024,7 @@ const slotProps = computed(() => ({
   videoZoomOpen: videoZoomOpen.value,
   setVideoZoomOpen,
   openHistoryDetails,
+  onSelectHistoryStripItem,
   historyDetailsOpen: historyDetailsOpen.value,
   setHistoryDetailsOpen,
   historyDetailsTitle: historyDetailsTitle.value,

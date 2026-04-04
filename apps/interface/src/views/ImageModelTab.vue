@@ -436,7 +436,7 @@ Symbols (top-level; keep in sync; no ghosts):
         <RunSummaryChips :text="runSummary" />
       </RunCard>
 
-      <ResultsCard :showGenerate="false" headerClass="three-cols" headerRightClass="results-header-actions">
+      <GenerationResultsPanel showHistory :showInfo="Boolean(info)">
         <template #header-right>
           <div v-if="gentimeSeconds !== null">
             <span class="caption">Time: {{ gentimeSeconds.toFixed(2) }}s</span>
@@ -447,76 +447,61 @@ Symbols (top-level; keep in sync; no ghosts):
           <button class="btn btn-sm btn-outline" type="button" @click="copyCurrentParams">Copy params</button>
         </template>
 
-        <div class="gen-card mb-3">
-          <WanSubHeader title="History">
-            <button class="btn btn-sm btn-ghost" type="button" title="Clear history" :disabled="!history.length || isRunning" @click="clearHistory">Clear</button>
-          </WanSubHeader>
-          <div v-if="history.length" class="cdx-history-list">
-            <button
-              v-for="item in history"
-              :key="item.taskId"
-              type="button"
-              :class="['cdx-history-item', { 'is-selected': item.taskId === selectedTaskId }]"
-              :aria-label="`Open history details for ${formatHistoryTitle(item)}`"
-              @click="openHistoryDetails(item)"
-            >
-              <img
-                v-if="item.thumbnail"
-                class="cdx-history-thumb"
-                :src="toDataUrl(item.thumbnail)"
-                :alt="formatHistoryTitle(item)"
-                loading="lazy"
+        <template #history-actions>
+          <button class="btn btn-sm btn-ghost" type="button" title="Clear history" :disabled="!history.length || isRunning" @click="clearHistory">Clear</button>
+        </template>
+
+        <template #history>
+          <ResultsHistoryStrip
+            :items="history"
+            :selectedTaskId="selectedTaskId"
+            :formatTitle="formatHistoryTitle"
+            :toDataUrl="toDataUrl"
+            @select="onSelectImageHistoryItem"
+          />
+        </template>
+
+        <template #viewer>
+          <ResultViewer
+            mode="image"
+            :images="images"
+            :previewImage="previewImage"
+            :previewCaption="previewCaption"
+            :isRunning="isRunning"
+            :width="params.width"
+            :height="params.height"
+            :emptyText="resultsEmptyText"
+          >
+            <template #empty>
+              <div class="results-empty-state">
+                <div class="results-empty-title">
+                  <template v-if="isRunning">{{ resultsEmptyText }}</template>
+                  <template v-else>No images yet</template>
+                </div>
+                <div v-if="!isRunning" class="caption">Generate to see results here.</div>
+              </div>
+            </template>
+            <template #image-actions="{ image, index }">
+              <button
+                v-if="supportsImg2Img"
+                class="gallery-action"
+                type="button"
+                title="Send to Img2Img"
+                @click="sendToImg2Img(image)"
               >
-              <div v-else class="cdx-history-thumb cdx-history-thumb--empty">
-                <span>No preview</span>
-              </div>
-            </button>
-          </div>
-          <div v-else class="caption">No runs yet.</div>
-        </div>
+                Send to Img2Img
+              </button>
+              <button class="gallery-action" type="button" title="Download Image" @click="download(image, index)">
+                Download
+              </button>
+            </template>
+          </ResultViewer>
+        </template>
 
-        <ResultViewer
-          mode="image"
-          :images="images"
-          :previewImage="previewImage"
-          :previewCaption="previewCaption"
-          :isRunning="isRunning"
-          :width="params.width"
-          :height="params.height"
-          :emptyText="resultsEmptyText"
-        >
-          <template #empty>
-            <div class="results-empty-state">
-              <div class="results-empty-title">
-                <template v-if="isRunning">{{ resultsEmptyText }}</template>
-                <template v-else>No images yet</template>
-              </div>
-              <div v-if="!isRunning" class="caption">Generate to see results here.</div>
-            </div>
-          </template>
-          <template #image-actions="{ image, index }">
-            <button
-              v-if="supportsImg2Img"
-              class="gallery-action"
-              type="button"
-              title="Send to Img2Img"
-              @click="sendToImg2Img(image)"
-            >
-              Send to Img2Img
-            </button>
-            <button class="gallery-action" type="button" title="Download Image" @click="download(image, index)">
-              Download
-            </button>
-          </template>
-        </ResultViewer>
-      </ResultsCard>
-
-      <div class="panel" v-if="info">
-        <div class="panel-header">Generation Info</div>
-        <div class="panel-body">
+        <template #info>
           <pre class="text-xs break-words">{{ formatJson(info) }}</pre>
-        </div>
-      </div>
+        </template>
+      </GenerationResultsPanel>
     </div>
 
     <Modal v-model="historyDetailsOpen" :title="historyDetailsTitle">
@@ -640,9 +625,9 @@ import PromptCard from '../components/prompt/PromptCard.vue'
 import RefinerSettingsCard from '../components/RefinerSettingsCard.vue'
 import SupirModeCard from '../components/SupirModeCard.vue'
 import SwapStageSettingsCard from '../components/SwapStageSettingsCard.vue'
-import WanSubHeader from '../components/wan/WanSubHeader.vue'
 import ResultViewer from '../components/ResultViewer.vue'
-import ResultsCard from '../components/results/ResultsCard.vue'
+import GenerationResultsPanel from '../components/results/GenerationResultsPanel.vue'
+import ResultsHistoryStrip from '../components/results/ResultsHistoryStrip.vue'
 import RunCard from '../components/results/RunCard.vue'
 import RunProgressStatus from '../components/results/RunProgressStatus.vue'
 import RunSummaryChips from '../components/results/RunSummaryChips.vue'
@@ -693,6 +678,12 @@ const schedulers = ref<SchedulerInfo[]>([])
 const historyDetailsOpen = ref(false)
 const historyDetailsItem = ref<ImageRunHistoryItem | null>(null)
 const { ensureSupirDiagnosticsLoaded } = useSupirDiagnostics()
+
+function onSelectImageHistoryItem(item: { taskId: string }): void {
+  const match = history.value.find((entry) => entry.taskId === item.taskId)
+  if (!match) return
+  openHistoryDetails(match)
+}
 
 onMounted(() => {
   bootstrap

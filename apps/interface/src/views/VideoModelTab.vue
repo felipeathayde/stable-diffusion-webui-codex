@@ -701,12 +701,7 @@ Symbols (top-level; keep in sync; no ghosts):
             />
           </RunCard>
 
-          <ResultsCard
-            class="video-results-panel"
-            headerClass="three-cols"
-            headerRightClass="results-header-actions"
-            :showGenerate="false"
-          >
+          <GenerationResultsPanel class="video-results-panel" showHistory showMedia :showInfo="Boolean(wan.info)">
             <template #header-right>
               <button class="btn btn-sm btn-outline" type="button" :disabled="wan.workflowBusy" @click="wan.sendToWorkflows">
                 {{ wan.workflowBusy ? 'Saving…' : 'Save snapshot' }}
@@ -714,35 +709,20 @@ Symbols (top-level; keep in sync; no ghosts):
               <button class="btn btn-sm btn-outline" type="button" @click="wan.copyCurrentParams">Copy params</button>
             </template>
 
-            <div class="gen-card mb-3">
-              <div class="row-split">
-                <span class="label-muted">History</span>
-                <button class="btn btn-sm btn-ghost" type="button" title="Clear history" :disabled="!wan.history.length || wan.isRunning" @click="wan.clearHistory">
-                  Clear
-                </button>
-              </div>
-              <div v-if="wan.history.length" class="cdx-history-list mt-2">
-                <button
-                  v-for="item in wan.history"
-                  :key="item.taskId"
-                  type="button"
-                  :class="['cdx-history-item', { 'is-selected': item.taskId === wan.selectedTaskId }]"
-                  :aria-label="`Open history details for ${wan.formatHistoryTitle(item)}`"
-                  @click="wan.openHistoryDetails(item)"
-                >
-                  <img
-                    v-if="item.thumbnail"
-                    class="cdx-history-thumb"
-                    :src="wan.toDataUrl(item.thumbnail)"
-                    :alt="wan.formatHistoryTitle(item)"
-                    loading="lazy"
-                  >
-                  <div v-else class="cdx-history-thumb cdx-history-thumb--empty">
-                    <span>No preview</span>
-                  </div>
-                </button>
-              </div>
-              <div v-else class="caption">No runs yet.</div>
+            <template #history-actions>
+              <button class="btn btn-sm btn-ghost" type="button" title="Clear history" :disabled="!wan.history.length || wan.isRunning" @click="wan.clearHistory">
+                Clear
+              </button>
+            </template>
+
+            <template #history>
+              <ResultsHistoryStrip
+                :items="wan.history"
+                :selectedTaskId="wan.selectedTaskId"
+                :formatTitle="wan.formatHistoryTitle"
+                :toDataUrl="wan.toDataUrl"
+                @select="wan.onSelectHistoryStripItem"
+              />
 
               <details v-if="wan.diffText" class="accordion mt-2">
                 <summary>Diff vs previous run</summary>
@@ -750,45 +730,47 @@ Symbols (top-level; keep in sync; no ghosts):
                   <pre class="text-xs break-words">{{ wan.diffText }}</pre>
                 </div>
               </details>
-            </div>
+            </template>
 
-            <div v-if="wan.videoUrl" class="gen-card mb-3">
-              <div class="row-split">
-                <span class="label-muted">Exported Video</span>
-                <div class="results-header-actions">
-                  <button class="btn btn-sm btn-outline" type="button" @click="wan.openResultVideoZoom">Zoom</button>
-                  <a class="btn btn-sm btn-outline" :href="wan.videoUrl" target="_blank" rel="noreferrer">Open</a>
-                </div>
-              </div>
-              <video class="w-full rounded" :src="wan.videoUrl" controls @dblclick.prevent.stop />
-              <p class="caption mt-1">Tip: if playback fails, install ffmpeg and ensure CODEX_ROOT/output is writable.</p>
-            </div>
+            <template #media-actions>
+              <button v-if="wan.videoUrl" class="btn btn-sm btn-outline" type="button" @click="wan.openResultVideoZoom">Zoom</button>
+              <a v-if="wan.videoUrl" class="btn btn-sm btn-outline" :href="wan.videoUrl" target="_blank" rel="noreferrer">Open</a>
+            </template>
 
-            <ResultViewer mode="video" :frames="wan.framesResult" :toDataUrl="wan.toDataUrl" emptyText="No results yet.">
-              <template #empty>
-                <div class="results-empty-state">
-                  <div class="results-empty-title">
-                    <template v-if="wan.isRunning">Generating…</template>
-                    <template v-else-if="wan.videoUrl">Frames not returned</template>
-                    <template v-else>No results yet</template>
+            <template #media>
+              <video v-if="wan.videoUrl" class="w-full rounded" :src="wan.videoUrl" controls @dblclick.prevent.stop />
+              <div v-else class="caption">No exported video yet.</div>
+              <p v-if="wan.videoUrl" class="caption mt-1">Tip: if playback fails, install ffmpeg and ensure CODEX_ROOT/output is writable.</p>
+            </template>
+
+            <template #viewer>
+              <ResultViewer mode="video" :frames="wan.framesResult" :toDataUrl="wan.toDataUrl" emptyText="No results yet.">
+                <template #empty>
+                  <div class="results-empty-state">
+                    <div class="results-empty-title">
+                      <template v-if="wan.isRunning">Generating…</template>
+                      <template v-else-if="wan.videoUrl">Frames not returned</template>
+                      <template v-else>No results yet</template>
+                    </div>
+                    <div v-if="wan.videoUrl" class="caption">Enable “Return frames” in Video Output to include frames in the result payload.</div>
+                    <div v-else-if="!wan.isRunning" class="caption">Generate to see results here.</div>
                   </div>
-                  <div v-if="wan.videoUrl" class="caption">Enable “Return frames” in Video Output to include frames in the result payload.</div>
-                  <div v-else-if="!wan.isRunning" class="caption">Generate to see results here.</div>
-                </div>
-              </template>
-            </ResultViewer>
-            <VideoZoomOverlay :modelValue="wan.videoZoomOpen" :src="wan.videoUrl || ''" aria-label="Zoomed WAN result video" @update:modelValue="wan.setVideoZoomOpen" />
+                </template>
+              </ResultViewer>
+            </template>
 
-            <div v-if="wan.info" class="gen-card mt-3">
-              <div class="row-split">
-                <span class="label-muted">Generation Info</span>
-                <div class="results-header-actions">
-                  <button class="btn btn-sm btn-outline" type="button" @click="wan.copyInfo">Copy info</button>
-                </div>
-              </div>
+            <template #info-actions>
+              <button class="btn btn-sm btn-outline" type="button" @click="wan.copyInfo">Copy info</button>
+            </template>
+
+            <template #info>
               <pre class="text-xs break-words">{{ wan.formatJson(wan.info) }}</pre>
-            </div>
-          </ResultsCard>
+            </template>
+
+            <template #after>
+              <VideoZoomOverlay :modelValue="wan.videoZoomOpen" :src="wan.videoUrl || ''" aria-label="Zoomed WAN result video" @update:modelValue="wan.setVideoZoomOpen" />
+            </template>
+          </GenerationResultsPanel>
         </div>
 
         <Modal :modelValue="wan.historyDetailsOpen" :title="wan.historyDetailsTitle" @update:modelValue="wan.setHistoryDetailsOpen">
@@ -1046,30 +1028,18 @@ Symbols (top-level; keep in sync; no ghosts):
             />
           </RunCard>
 
-          <ResultsCard class="video-results-panel" :showGenerate="false" headerRightClass="results-header-actions">
-            <template #header-right>
-              <button v-if="ltx.info" class="btn btn-sm btn-outline" type="button" @click="ltx.copyJson(ltx.info, 'Copied generation info.')">
-                Copy info
-              </button>
+          <GenerationResultsPanel class="video-results-panel" showMedia :showInfo="Boolean(ltx.info)">
+            <template #media-actions>
+              <button v-if="ltx.videoUrl" class="btn btn-sm btn-outline" type="button" @click="ltx.openResultVideoZoom">Zoom</button>
+              <a v-if="ltx.videoUrl" class="btn btn-sm btn-outline" :href="ltx.videoUrl" target="_blank" rel="noreferrer">Open</a>
             </template>
 
-            <div class="gen-card mb-3">
-              <div class="row-split">
-                <span class="label-muted">Exported Video</span>
-                <div v-if="ltx.videoUrl" class="results-header-actions">
-                  <button class="btn btn-sm btn-outline" type="button" @click="ltx.openResultVideoZoom">Zoom</button>
-                  <a class="btn btn-sm btn-outline" :href="ltx.videoUrl" target="_blank" rel="noreferrer">Open</a>
-                </div>
-              </div>
-              <video v-if="ltx.videoUrl" class="rounded mt-2" :src="ltx.videoUrl" controls @dblclick.prevent.stop />
-              <div v-else class="caption mt-2">No exported video yet.</div>
-            </div>
+            <template #media>
+              <video v-if="ltx.videoUrl" class="rounded" :src="ltx.videoUrl" controls @dblclick.prevent.stop />
+              <div v-else class="caption">No exported video yet.</div>
+            </template>
 
-            <div class="gen-card">
-              <div class="row-split mb-2">
-                <span class="label-muted">Returned Frames</span>
-                <span class="caption">{{ ltx.params.videoReturnFrames ? 'Requested' : 'Disabled' }}</span>
-              </div>
+            <template #viewer>
               <ResultViewer mode="video" :frames="ltx.frames" :toDataUrl="ltx.toDataUrl" emptyText="No frames yet.">
                 <template #empty>
                   <div class="results-empty-state">
@@ -1086,21 +1056,27 @@ Symbols (top-level; keep in sync; no ghosts):
                   </div>
                 </template>
               </ResultViewer>
-            </div>
+            </template>
 
-            <div v-if="ltx.info" class="gen-card mt-3">
-              <div class="row-split">
-                <span class="label-muted">Generation Info</span>
-              </div>
-              <pre class="text-xs break-words mt-2">{{ ltx.formatJson(ltx.info) }}</pre>
-            </div>
-            <VideoZoomOverlay
-              :modelValue="ltx.videoZoomOpen"
-              :src="ltx.videoUrl || ''"
-              aria-label="Zoomed LTX result video"
-              @update:modelValue="ltx.setVideoZoomOpen"
-            />
-          </ResultsCard>
+            <template #info-actions>
+              <button class="btn btn-sm btn-outline" type="button" @click="ltx.copyJson(ltx.info, 'Copied generation info.')">
+                Copy info
+              </button>
+            </template>
+
+            <template #info>
+              <pre class="text-xs break-words">{{ ltx.formatJson(ltx.info) }}</pre>
+            </template>
+
+            <template #after>
+              <VideoZoomOverlay
+                :modelValue="ltx.videoZoomOpen"
+                :src="ltx.videoUrl || ''"
+                aria-label="Zoomed LTX result video"
+                @update:modelValue="ltx.setVideoZoomOpen"
+              />
+            </template>
+          </GenerationResultsPanel>
         </div>
       </section>
       <section v-else>
@@ -1127,7 +1103,8 @@ import VideoOutputCard from '../components/video/VideoOutputCard.vue'
 import VideoPromptStageCard from '../components/video/VideoPromptStageCard.vue'
 import VideoStageBasicParamsCard from '../components/video/VideoStageBasicParamsCard.vue'
 import LoraModal from '../components/modals/LoraModal.vue'
-import ResultsCard from '../components/results/ResultsCard.vue'
+import GenerationResultsPanel from '../components/results/GenerationResultsPanel.vue'
+import ResultsHistoryStrip from '../components/results/ResultsHistoryStrip.vue'
 import RunCard from '../components/results/RunCard.vue'
 import RunProgressStatus from '../components/results/RunProgressStatus.vue'
 import RunSummaryChips from '../components/results/RunSummaryChips.vue'

@@ -701,7 +701,7 @@ Symbols (top-level; keep in sync; no ghosts):
             />
           </RunCard>
 
-          <GenerationResultsPanel class="video-results-panel" showHistory showMedia :showInfo="Boolean(wan.info)">
+          <GenerationResultsPanel class="video-results-panel" showHistory :showMedia="Boolean(wan.videoUrl)" :showInfo="Boolean(wan.info)">
             <template #header-right>
               <button class="btn btn-sm btn-outline" type="button" :disabled="wan.workflowBusy" @click="wan.sendToWorkflows">
                 {{ wan.workflowBusy ? 'Saving…' : 'Save snapshot' }}
@@ -738,9 +738,8 @@ Symbols (top-level; keep in sync; no ghosts):
             </template>
 
             <template #media>
-              <video v-if="wan.videoUrl" class="w-full rounded" :src="wan.videoUrl" controls @dblclick.prevent.stop />
-              <div v-else class="caption">No exported video yet.</div>
-              <p v-if="wan.videoUrl" class="caption mt-1">Tip: if playback fails, install ffmpeg and ensure CODEX_ROOT/output is writable.</p>
+              <video class="w-full rounded" :src="wan.videoUrl || ''" controls @dblclick.prevent.stop />
+              <p class="caption mt-1">Tip: if playback fails, install ffmpeg and ensure CODEX_ROOT/output is writable.</p>
             </template>
 
             <template #viewer>
@@ -767,7 +766,7 @@ Symbols (top-level; keep in sync; no ghosts):
               <pre class="text-xs break-words">{{ wan.formatJson(wan.info) }}</pre>
             </template>
 
-            <template #after>
+            <template #after-viewer>
               <VideoZoomOverlay :modelValue="wan.videoZoomOpen" :src="wan.videoUrl || ''" aria-label="Zoomed WAN result video" @update:modelValue="wan.setVideoZoomOpen" />
             </template>
           </GenerationResultsPanel>
@@ -1028,15 +1027,14 @@ Symbols (top-level; keep in sync; no ghosts):
             />
           </RunCard>
 
-          <GenerationResultsPanel class="video-results-panel" showMedia :showInfo="Boolean(ltx.info)">
+          <GenerationResultsPanel class="video-results-panel" :showMedia="Boolean(ltx.videoUrl)" :showInfo="Boolean(ltx.info)">
             <template #media-actions>
               <button v-if="ltx.videoUrl" class="btn btn-sm btn-outline" type="button" @click="ltx.openResultVideoZoom">Zoom</button>
               <a v-if="ltx.videoUrl" class="btn btn-sm btn-outline" :href="ltx.videoUrl" target="_blank" rel="noreferrer">Open</a>
             </template>
 
             <template #media>
-              <video v-if="ltx.videoUrl" class="rounded" :src="ltx.videoUrl" controls @dblclick.prevent.stop />
-              <div v-else class="caption">No exported video yet.</div>
+              <video class="rounded" :src="ltx.videoUrl || ''" controls @dblclick.prevent.stop />
             </template>
 
             <template #viewer>
@@ -1068,7 +1066,7 @@ Symbols (top-level; keep in sync; no ghosts):
               <pre class="text-xs break-words">{{ ltx.formatJson(ltx.info) }}</pre>
             </template>
 
-            <template #after>
+            <template #after-viewer>
               <VideoZoomOverlay
                 :modelValue="ltx.videoZoomOpen"
                 :src="ltx.videoUrl || ''"

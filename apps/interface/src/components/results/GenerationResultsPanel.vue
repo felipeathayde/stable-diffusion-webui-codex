@@ -6,8 +6,8 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Shared generation results owner for image and video model tabs.
-Provides the common Results card shell plus optional History, media-preview, and Generation Info sections, while callers supply family-specific actions and viewer content through explicit slots.
+Purpose: WAN-derived shared generation results owner for image and video model tabs.
+Provides a mechanical extraction of the live WAN Results block order/layout (header actions, optional History card, optional exported-media card, viewer, optional after-viewer slot, optional Generation Info card), while callers supply family-specific content through explicit slots.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `GenerationResultsPanel` (component): Shared results owner that wraps `ResultsCard` and renders the canonical section order for generation tabs.
@@ -24,7 +24,7 @@ Symbols (top-level; keep in sync; no ghosts):
       <slot name="header-right" />
     </template>
 
-    <div v-if="props.showHistory" class="gen-card">
+    <div v-if="props.showHistory" class="gen-card mb-3">
       <div class="row-split">
         <span class="label-muted">{{ props.historyTitle }}</span>
         <div v-if="$slots['history-actions']" class="results-header-actions">
@@ -38,7 +38,7 @@ Symbols (top-level; keep in sync; no ghosts):
       </div>
     </div>
 
-    <div v-if="props.showMedia" class="gen-card">
+    <div v-if="props.showMedia" class="gen-card mb-3">
       <div class="row-split">
         <span class="label-muted">{{ props.mediaTitle }}</span>
         <div v-if="$slots['media-actions']" class="results-header-actions">
@@ -52,7 +52,9 @@ Symbols (top-level; keep in sync; no ghosts):
 
     <slot name="viewer" />
 
-    <div v-if="props.showInfo" class="gen-card">
+    <slot name="after-viewer" />
+
+    <div v-if="props.showInfo" class="gen-card mt-3">
       <div class="row-split">
         <span class="label-muted">{{ props.infoTitle }}</span>
         <div v-if="$slots['info-actions']" class="results-header-actions">
@@ -63,8 +65,6 @@ Symbols (top-level; keep in sync; no ghosts):
         <slot name="info" />
       </div>
     </div>
-
-    <slot name="after" />
   </ResultsCard>
 </template>
 

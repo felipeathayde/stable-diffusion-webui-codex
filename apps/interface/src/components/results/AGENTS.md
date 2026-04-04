@@ -9,7 +9,7 @@ Status: Active
 
 ## Notes
 - `ResultsCard.vue` provides the low-level standard 3-column Results header (title / center / right); sticky behavior is enabled by including `results-sticky` in `headerClass`. It exposes `bodyClass` as the only body passthrough; callers must own geometry with explicit local wrappers/classes instead of generic inline body styles.
-- `GenerationResultsPanel.vue` is the shared results owner for generation tabs: it wraps `ResultsCard.vue` and renders the canonical section order (`History` -> optional media preview -> viewer -> optional `Generation Info`) for image/WAN/LTX results without hiding family-specific capability gaps.
+- `GenerationResultsPanel.vue` is the shared results owner for generation tabs, but its structure is not neutral: it is a mechanical extraction of the live WAN Results block order (`History` -> optional exported-video card -> viewer -> optional after-viewer overlay slot -> optional `Generation Info`) and other families must adapt to that WAN baseline through capability-driven omissions only.
 - `ResultsHistoryStrip.vue` owns the shared thumbnail history-strip body for image and WAN results; it renders the shared `cdx-history-*` card layout and leaves history persistence itself to the calling runtime/composable.
 - `RunCard.vue` provides the “Run” header (Generate CTA, optional batch dropdown for count/size, optional header-right actions slot) that sits above Results in generation views; batch changes apply immediately (OK closes the dropdown). While a run is active, the center CTA switches to a destructive two-click cancel confirm (`Cancel` -> `Are you sure?`, 4s timeout).
 - `RunSummaryChips.vue` renders a compact “run summary” string as chips for the Run body (mirrors the prior `caption` summary line, but more scannable).
@@ -22,3 +22,4 @@ Status: Active
 - 2026-03-02: `RunProgressStatus.vue` now renders dual progress bars for generation runs (upper `total` bar with phase label + lower `steps` bar), while preserving existing status variants and elapsed/ETA metadata layout.
 - 2026-03-29: `ResultsCard.vue` removed the dead generic `bodyStyle` passthrough; body geometry must now be expressed via explicit local wrappers/classes instead of a generic inline-style escape hatch.
 - 2026-04-04: `ImageModelTab.vue` and `VideoModelTab.vue` no longer hand-build the full Results surface; both now mount `GenerationResultsPanel.vue`, while image/WAN history strips are routed through `ResultsHistoryStrip.vue`.
+- 2026-04-04: `GenerationResultsPanel.vue` was corrected to be WAN-derived instead of a neutral/common-denominator abstraction; do not reintroduce empty exported-media placeholders or a second “generic” Results layout path.

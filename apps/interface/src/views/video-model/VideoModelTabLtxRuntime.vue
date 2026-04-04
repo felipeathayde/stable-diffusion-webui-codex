@@ -58,10 +58,8 @@ const {
   tab,
   params,
   mode,
-  checkpointCoreOnly,
   ltxExecutionSurface,
   checkpointExecutionMetadata,
-  assetContract,
   blockedReason,
   generate,
   cancel,
@@ -121,28 +119,6 @@ const dimensionAlignment = computed(() => {
   if (selectedExecutionProfile.value !== 'two_stage') return LTX_DIM_ALIGNMENT
   return resolveLtxDimAlignmentForExecutionProfile(selectedExecutionProfile.value)
 })
-const executionProfileCaption = computed(() => {
-  const profile = selectedExecutionProfile.value
-  if (!profile) {
-    return 'Execution profiles choose the truthful LTX lane. Sampler and scheduler stay derived from the selected profile; they are not raw sampler controls.'
-  }
-  if (profile === 'one_stage') {
-    return 'One-stage runs a single-stage lane to final output resolution. Sampler and scheduler stay derived from this profile.'
-  }
-  if (profile === 'two_stage') {
-    return 'Two-stage runs stage 1 at half final resolution, then a fixed x2 latent upscale plus a fixed stage-2 distilled refine. Steps and CFG control only stage 1; this is not a raw sampler lane.'
-  }
-  if (profile === 'distilled') {
-    return 'Distilled runs the fixed distilled one-stage lane. Sampler and scheduler stay derived from this profile.'
-  }
-  return `Stored profile '${profile}' is not a supported LTX execution-profile id on this frontend slice. Re-select a supported checkpoint/profile pair.`
-})
-const dimensionRuleCaption = computed(() => {
-  if (selectedExecutionProfile.value === 'two_stage') {
-    return `Width and height stay the final output dimensions. two_stage runs stage 1 at half resolution, so both final dimensions must be divisible by ${LTX_TWO_STAGE_FINAL_DIM_ALIGNMENT}.`
-  }
-  return `Width and height stay the final output dimensions. one_stage and distilled require multiples of ${LTX_DIM_ALIGNMENT}.`
-})
 const dimensionWarning = computed(() => {
   const current = params.value
   const profile = selectedExecutionProfile.value
@@ -186,9 +162,6 @@ const executionProfileWarning = computed(() => {
   return ''
 })
 
-const checkpointDisplay = computed(() => String(params.value?.checkpoint || '').trim() || 'Not selected')
-const vaeDisplay = computed(() => String(params.value?.vae || '').trim() || (checkpointCoreOnly.value ? 'Not selected' : 'Built-in / omitted'))
-const textEncoderDisplay = computed(() => String(params.value?.textEncoder || '').trim() || 'Not selected')
 const hideNegativePrompt = computed(() => Number(params.value?.cfgScale) === 1)
 const promptModeLabel = computed(() => (mode.value === 'img2vid' ? 'IMG2VID' : 'TXT2VID'))
 const runGenerateDisabled = computed(() => isRunning.value || Boolean(blockedReason.value))
@@ -347,21 +320,14 @@ const slotProps = computed(() => ({
   videoZoomOpen: videoZoomOpen.value,
   errorMessage: errorMessage.value,
   isRunning: isRunning.value,
-  checkpointCoreOnly: checkpointCoreOnly.value,
   checkpointExecutionMetadata: checkpointExecutionMetadata.value,
-  assetContract: assetContract.value,
   copyNotice: copyNotice.value,
   resumeNotice: resumeNotice.value,
   dimensionAlignment: dimensionAlignment.value,
   executionProfileOptions: executionProfileOptions.value,
-  executionProfileCaption: executionProfileCaption.value,
-  dimensionRuleCaption: dimensionRuleCaption.value,
   dimensionWarning: dimensionWarning.value,
   frameWarning: frameWarning.value,
   executionProfileWarning: executionProfileWarning.value,
-  checkpointDisplay: checkpointDisplay.value,
-  vaeDisplay: vaeDisplay.value,
-  textEncoderDisplay: textEncoderDisplay.value,
   hideNegativePrompt: hideNegativePrompt.value,
   promptModeLabel: promptModeLabel.value,
   runGenerateDisabled: runGenerateDisabled.value,

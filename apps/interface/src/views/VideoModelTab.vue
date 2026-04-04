@@ -894,9 +894,7 @@ Symbols (top-level; keep in sync; no ghosts):
                 :corner-label="ltx.promptModeLabel"
                 @update:prompt="(value) => ltx.updateParamsPatch({ prompt: value })"
                 @update:negative="(value) => ltx.updateParamsPatch({ negativePrompt: value })"
-              >
-                <p class="caption mt-2">Mode, checkpoint, VAE, and text encoder are selected in QuickSettings.</p>
-              </VideoPromptStageCard>
+              />
 
               <div v-if="ltx.mode === 'img2vid'" class="mt-3">
                 <VideoInitImageCard
@@ -906,9 +904,7 @@ Symbols (top-level; keep in sync; no ghosts):
                   @set:initImage="ltx.onInitImageFile"
                   @clear:initImage="ltx.clearInit"
                   @reject:initImage="ltx.onInitImageRejected"
-                >
-                  <p class="caption mt-2">Generic LTX img2vid currently does not expose denoise strength on `/api/img2vid`.</p>
-                </VideoInitImageCard>
+                />
               </div>
             </div>
           </div>
@@ -945,7 +941,6 @@ Symbols (top-level; keep in sync; no ghosts):
                 @update:frames="(value) => ltx.updateParamsPatch({ frames: ltx.normalizeFrameInput(value, ltx.params!.frames) })"
                 @update:fps="(value) => ltx.updateParamsPatch({ fps: ltx.normalizePositiveInt(value, ltx.params!.fps, 1, 240) })"
               >
-                <p class="caption mt-2">{{ ltx.dimensionRuleCaption }}</p>
                 <p v-if="ltx.dimensionWarning" class="panel-status mt-2">{{ ltx.dimensionWarning }}</p>
                 <p v-if="ltx.frameWarning" class="panel-status mt-2">{{ ltx.frameWarning }}</p>
               </VideoCoreParamsCard>
@@ -988,7 +983,6 @@ Symbols (top-level; keep in sync; no ghosts):
                           {{ option.label }}
                         </option>
                       </select>
-                      <p class="caption mt-2">{{ ltx.executionProfileCaption }}</p>
                     </div>
                   </div>
                   <p v-if="ltx.executionProfileWarning" class="panel-status mt-2">{{ ltx.executionProfileWarning }}</p>
@@ -996,7 +990,7 @@ Symbols (top-level; keep in sync; no ghosts):
               </div>
 
               <div class="mt-3">
-                <VideoOutputCard title="Output / Assets">
+                <VideoOutputCard title="Video Output">
                   <div class="row-split mb-2">
                     <span class="label-muted">Return frames</span>
                     <button
@@ -1010,19 +1004,6 @@ Symbols (top-level; keep in sync; no ghosts):
                     </button>
                   </div>
 
-                  <div class="space-y-2 text-sm">
-                    <div class="row-split"><span class="label-muted">Checkpoint</span><code>{{ ltx.checkpointDisplay }}</code></div>
-                    <div class="row-split"><span class="label-muted">VAE</span><code>{{ ltx.vaeDisplay }}</code></div>
-                    <div class="row-split"><span class="label-muted">Text Encoder</span><code>{{ ltx.textEncoderDisplay }}</code></div>
-                  </div>
-
-                  <p v-if="ltx.checkpointCoreOnly && ltx.assetContract?.notes" class="caption mt-2">{{ ltx.assetContract.notes }}</p>
-                  <details v-else-if="ltx.assetContract?.notes" class="accordion mt-2">
-                    <summary>Contract notes</summary>
-                    <div class="accordion-body">
-                      <p class="text-xs break-words">{{ ltx.assetContract.notes }}</p>
-                    </div>
-                  </details>
                 </VideoOutputCard>
               </div>
             </div>

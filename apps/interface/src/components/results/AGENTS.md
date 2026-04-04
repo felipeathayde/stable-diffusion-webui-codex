@@ -8,7 +8,9 @@ Status: Active
 - Shared "Results" panel components for generation views (header layout + action slots).
 
 ## Notes
-- `ResultsCard.vue` provides the standard 3-column Results header (title / center / right); sticky behavior is enabled by including `results-sticky` in `headerClass`. It exposes `bodyClass` as the only body passthrough; callers must own geometry with explicit local wrappers/classes instead of generic inline body styles.
+- `ResultsCard.vue` provides the low-level standard 3-column Results header (title / center / right); sticky behavior is enabled by including `results-sticky` in `headerClass`. It exposes `bodyClass` as the only body passthrough; callers must own geometry with explicit local wrappers/classes instead of generic inline body styles.
+- `GenerationResultsPanel.vue` is the shared results owner for generation tabs: it wraps `ResultsCard.vue` and renders the canonical section order (`History` -> optional media preview -> viewer -> optional `Generation Info`) for image/WAN/LTX results without hiding family-specific capability gaps.
+- `ResultsHistoryStrip.vue` owns the shared thumbnail history-strip body for image and WAN results; it renders the shared `cdx-history-*` card layout and leaves history persistence itself to the calling runtime/composable.
 - `RunCard.vue` provides the “Run” header (Generate CTA, optional batch dropdown for count/size, optional header-right actions slot) that sits above Results in generation views; batch changes apply immediately (OK closes the dropdown). While a run is active, the center CTA switches to a destructive two-click cancel confirm (`Cancel` -> `Are you sure?`, 4s timeout).
 - `RunSummaryChips.vue` renders a compact “run summary” string as chips for the Run body (mirrors the prior `caption` summary line, but more scannable).
 - `RunProgressStatus.vue` is the canonical run-status panel used in Run cards across image, WAN, and upscale views, including severity variants (`progress|error|warning|info|success`), color semantics, animated SVG icons, and a right-aligned elapsed timer on progress rows.
@@ -19,3 +21,4 @@ Status: Active
 - 2026-02-22: `RunCard.vue` now owns the run-cancel UX in the center CTA (destructive two-click confirm with a 4s reset window), replacing per-view header cancel buttons.
 - 2026-03-02: `RunProgressStatus.vue` now renders dual progress bars for generation runs (upper `total` bar with phase label + lower `steps` bar), while preserving existing status variants and elapsed/ETA metadata layout.
 - 2026-03-29: `ResultsCard.vue` removed the dead generic `bodyStyle` passthrough; body geometry must now be expressed via explicit local wrappers/classes instead of a generic inline-style escape hatch.
+- 2026-04-04: `ImageModelTab.vue` and `VideoModelTab.vue` no longer hand-build the full Results surface; both now mount `GenerationResultsPanel.vue`, while image/WAN history strips are routed through `ResultsHistoryStrip.vue`.

@@ -54,7 +54,8 @@ Status: Active
 - 2025-12-22: Removed remaining Vue SFC `<style>` blocks from `SettingsForm.vue` and `ParamBlocksRenderer.vue`; both now rely on `apps/interface/src/styles/components/*` (including `param-blocks.css`) and avoid inline `:style` layout for grids.
 - 2025-12-23: Added shared slider primitives (`components/ui/SliderField.vue`, `components/ui/NumberStepperInput.vue`) and migrated sliders to the unified layout (label left + input right above slider).
 - 2025-12-23: Deprecated per-card width classes (`w-*`) were removed; use `cdx-input-w-{xs,sm,md}` for numeric sizing.
-- 2025-12-25: Added `components/results/ResultsCard.vue` to standardize the 3-column sticky Results header (title / Generate / actions) across generation views.
+- 2025-12-25: Added `components/results/ResultsCard.vue` as the low-level 3-column sticky Results header shell (title / Generate / actions) across generation views.
+- 2026-04-04: `components/results/GenerationResultsPanel.vue` now owns the shared generation-results structure for image and video tabs, and `components/results/ResultsHistoryStrip.vue` owns the shared thumbnail history-strip body used by image/WAN results.
 - 2025-12-26: Added `BasicParametersCard.vue` as a shared “common params” card (sampler/scheduler/steps + seed/CFG + width/height), mirroring WAN stage styling.
 - 2025-12-27: `BasicParametersCard.vue` can optionally render resolution presets aligned with the Width/Height controls (`resolutionPresets`, rendered as a 2×2 grid).
 - 2025-12-28: QuickSettings perf toggles and other small toggles were unified as `qs-toggle-btn` buttons (replacing the old `.qs-switch` widgets); the Width/Height swap glyph was rotated for legacy parity via `.btn-swap-icon`.

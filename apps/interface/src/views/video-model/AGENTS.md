@@ -16,6 +16,7 @@ Status: Active
 - Helpers here may own active-family-only side effects (bootstrap, auto-resume, temporal persistence, guided listeners, checkpoint-default watchers).
 - Exported-video zoom overlay visibility is family-runtime-owned here (`videoZoomOpen` style state), while the actual `VideoZoomOverlay` component stays mounted in `VideoModelTab.vue`.
 - LTX geometry/frame/profile warnings also belong here: keep `32/64` dimension alignment, `8n+1` frame blocking messages, and stale execution-profile blocking copy in the LTX runtime helper instead of burying that contract in shared video cards or QuickSettings.
+- LTX Results header/history actions also belong here: `VideoModelTabLtxRuntime.vue` now wires the compact per-tab history strip plus `Save snapshot` / `Copy params` actions into the WAN-baseline `GenerationResultsPanel.vue` without reintroducing a second LTX-only Results surface.
 - Keep LTX helper copy here blocking-only. Do not reintroduce always-on explanatory legends about execution profiles, output assets, or selector ownership into the body cards.
 - Do not add shared presentational components here; shared UI belongs under `apps/interface/src/components/**`.
 - Only the active video family may instantiate its runtime helper at a time.

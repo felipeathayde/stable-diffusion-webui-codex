@@ -9,13 +9,16 @@ Required Notice: see NOTICE
 Purpose: Dedicated LTX video generation composable for the generic backend video contract.
 Owns per-tab runtime state for `ltx2` txt2vid/img2vid runs, validates LTX-specific frontend assumptions against the backend capability/asset
 contracts, preflights the strict LTX request contract (profile-aware `32px` / `64px` dimensions, `8n+1` frames, integer `steps` / `fps` / `seed`,
-finite `cfgScale`), builds generic payloads, starts `/api/txt2vid` or `/api/img2vid` tasks, and consumes task SSE events to surface progress/results.
-Unlike the WAN composable, this lane has no queue/history/stage orchestration; it stays fail-loud on unsupported generic-video assumptions.
+finite `cfgScale`), builds generic payloads, starts `/api/txt2vid` or `/api/img2vid` tasks, consumes task SSE events to surface progress/results,
+and keeps a compact per-tab run history aligned with the shared WAN-baseline Results owner. Unlike the WAN composable, this lane still has no queue
+or stage orchestration; it stays fail-loud on unsupported generic-video assumptions.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Status` (type): Runtime status union (`idle|running|error|done`).
+- `LtxRunStatus` (type): Terminal LTX history status union (`completed|error|cancelled`).
+- `LtxRunHistoryItem` (interface): Compact persisted LTX history entry (task id, status, summary, params snapshot, optional thumbnail/error).
 - `LtxProgressState` (interface): Current task progress snapshot.
-- `LtxGenerationState` (interface): Per-tab LTX runtime state.
+- `LtxGenerationState` (interface): Per-tab LTX runtime state, including current result/history selection.
 - `ResumeState` (type): Persisted auto-resume marker for an in-flight LTX task.
 - `freshState` (function): Creates empty per-tab state.
 - `readPersistedLtxResumeModeForTab` (function): Reads the persisted LTX resume-marker mode for a tab when available.
@@ -51,15 +54,35 @@ import { formatSettingsRevisionConflictMessage, resolveSettingsRevisionConflict 
 
 type Status = 'idle' | 'running' | 'error' | 'done'
 
-type ResumeState = {
+type LtxRunStatus = 'completed' | 'error' | 'cancelled'
+
+type RunMetadata = {
+  createdAtMs: number
+  summary: string
+  promptPreview: string
+  paramsSnapshot: Record<string, unknown>
+}
+
+type PendingRun = RunMetadata & {
   taskId: string
-  lastEventId: number
   mode: LtxGenerationMode
 }
 
+type ResumeState = PendingRun & {
+  lastEventId: number
+}
+
 type PreparedRun =
-  | { mode: 'txt2vid'; payload: LtxTxt2VidPayload }
-  | { mode: 'img2vid'; payload: LtxImg2VidPayload }
+  | (RunMetadata & { mode: 'txt2vid'; payload: LtxTxt2VidPayload })
+  | (RunMetadata & { mode: 'img2vid'; payload: LtxImg2VidPayload })
+
+export interface LtxRunHistoryItem extends RunMetadata {
+  taskId: string
+  status: LtxRunStatus
+  mode: LtxGenerationMode
+  errorMessage: string
+  thumbnail?: GeneratedImage | null
+}
 
 export interface LtxProgressState {
   stage: string
@@ -83,6 +106,10 @@ export interface LtxGenerationState {
   errorMessage: string
   taskId: string
   cancelRequested: boolean
+  currentRun: PendingRun | null
+  history: LtxRunHistoryItem[]
+  selectedTaskId: string
+  historyLoadingTaskId: string
 }
 
 const DEFAULT_PROGRESS: LtxProgressState = {
@@ -97,6 +124,7 @@ const DEFAULT_PROGRESS: LtxProgressState = {
   totalPhaseStep: null,
   totalPhaseTotalSteps: null,
 }
+const MAX_HISTORY = 8
 const tabStates = new Map<string, LtxGenerationState>()
 const unsubscribers = new Map<string, () => void>()
 const resumeAttempts = new Set<string>()
@@ -128,6 +156,21 @@ function freshState(): LtxGenerationState {
     errorMessage: '',
     taskId: '',
     cancelRequested: false,
+    currentRun: null,
+    history: [],
+    selectedTaskId: '',
+    historyLoadingTaskId: '',
+  }
+}
+
+function pendingRunFromSaved(saved: ResumeState): PendingRun {
+  return {
+    taskId: saved.taskId,
+    mode: saved.mode,
+    createdAtMs: saved.createdAtMs,
+    summary: saved.summary,
+    promptPreview: saved.promptPreview,
+    paramsSnapshot: saved.paramsSnapshot,
   }
 }
 
@@ -144,6 +187,7 @@ function applyResumePendingState(state: LtxGenerationState, saved: ResumeState):
   state.errorMessage = ''
   state.taskId = saved.taskId
   state.cancelRequested = false
+  state.currentRun = pendingRunFromSaved(saved)
 }
 
 function resetStateToIdle(state: LtxGenerationState): void {
@@ -155,6 +199,8 @@ function resetStateToIdle(state: LtxGenerationState): void {
   state.errorMessage = ''
   state.taskId = ''
   state.cancelRequested = false
+  state.currentRun = null
+  state.historyLoadingTaskId = ''
 }
 
 export function isLtxGenerationRunningForTab(tabId: string): boolean {
@@ -194,7 +240,13 @@ function loadResumeState(key: string): ResumeState | null {
       : 0
     const mode = parseResumeMode(parsed.mode)
     if (!mode) return null
-    return { taskId, lastEventId, mode }
+    const createdAtMs = typeof parsed.createdAtMs === 'number' && Number.isFinite(parsed.createdAtMs)
+      ? Math.max(0, Math.trunc(parsed.createdAtMs))
+      : 0
+    const summary = typeof parsed.summary === 'string' ? parsed.summary : ''
+    const promptPreview = typeof parsed.promptPreview === 'string' ? parsed.promptPreview : ''
+    const paramsSnapshot = isRecordObject(parsed.paramsSnapshot) ? parsed.paramsSnapshot : {}
+    return { taskId, lastEventId, mode, createdAtMs, summary, promptPreview, paramsSnapshot }
   } catch {
     return null
   }
@@ -421,6 +473,26 @@ export function useLtxVideoGeneration(tabId: string) {
   const blockedReason = computed(() => blockedReasonFor(params.value))
   const canGenerate = computed(() => blockedReason.value.length === 0)
 
+  function cloneParamsSnapshot(currentParams: LtxTabParams): Record<string, unknown> {
+    try {
+      return JSON.parse(JSON.stringify(currentParams)) as Record<string, unknown>
+    } catch {
+      return { ...(currentParams as unknown as Record<string, unknown>) }
+    }
+  }
+
+  function executionProfileSummaryLabel(rawValue: string): string {
+    const normalized = normalizeLtxExecutionProfile(String(rawValue || '').trim())
+    if (normalized === 'one_stage') return 'One-stage'
+    if (normalized === 'two_stage') return 'Two-stage'
+    if (normalized === 'distilled') return 'Distilled'
+    return String(rawValue || '').trim() || 'Profile unresolved'
+  }
+
+  function buildRunSummary(currentParams: LtxTabParams): string {
+    return `${currentParams.width}×${currentParams.height} · ${currentParams.frames}f @ ${currentParams.fps}fps · ${executionProfileSummaryLabel(currentParams.executionProfile)} · steps ${currentParams.steps} · cfg ${currentParams.cfgScale}`
+  }
+
   function buildCommonInput(currentParams: LtxTabParams): LtxVideoCommonInput {
     const checkpointLabel = String(currentParams.checkpoint || '').trim()
     if (!checkpointLabel) throw new Error('Select an LTX checkpoint in QuickSettings.')
@@ -484,10 +556,18 @@ export function useLtxVideoGeneration(tabId: string) {
   }
 
   function prepareRun(currentParams: LtxTabParams): PreparedRun {
+    const createdAtMs = Date.now()
+    const summary = buildRunSummary(currentParams)
+    const promptPreview = String(currentParams.prompt || '').trim().slice(0, 120)
+    const paramsSnapshot = cloneParamsSnapshot(currentParams)
     const common = buildCommonInput(currentParams)
     if (mode.value === 'img2vid') {
       return {
         mode: 'img2vid',
+        createdAtMs,
+        summary,
+        promptPreview,
+        paramsSnapshot,
         payload: buildLtxImg2VidPayload({
           ...common,
           initImageData: String(currentParams.initImageData || '').trim(),
@@ -496,8 +576,42 @@ export function useLtxVideoGeneration(tabId: string) {
     }
     return {
       mode: 'txt2vid',
+      createdAtMs,
+      summary,
+      promptPreview,
+      paramsSnapshot,
       payload: buildLtxTxt2VidPayload(common),
     }
+  }
+
+  function pushHistory(item: LtxRunHistoryItem): void {
+    const next = [item, ...state.value.history.filter((entry) => entry.taskId !== item.taskId)]
+    if (next.length > MAX_HISTORY) next.length = MAX_HISTORY
+    state.value.history = next
+  }
+
+  function ensureCurrentRunFromResume(saved: ResumeState): void {
+    if (state.value.currentRun?.taskId === saved.taskId) return
+    state.value.currentRun = pendingRunFromSaved(saved)
+  }
+
+  function finalizeCurrentRun(status: LtxRunStatus, options?: { errorMessage?: string; thumbnail?: GeneratedImage | null; taskId?: string }): void {
+    const currentRun = state.value.currentRun
+    const taskId = String(options?.taskId || currentRun?.taskId || state.value.taskId || '').trim()
+    if (!currentRun || !taskId) return
+    pushHistory({
+      taskId,
+      status,
+      mode: currentRun.mode,
+      createdAtMs: currentRun.createdAtMs,
+      summary: currentRun.summary,
+      promptPreview: currentRun.promptPreview,
+      paramsSnapshot: currentRun.paramsSnapshot,
+      errorMessage: String(options?.errorMessage || ''),
+      thumbnail: options?.thumbnail ?? null,
+    })
+    state.value.selectedTaskId = taskId
+    state.value.currentRun = null
   }
 
   function onTaskEvent(event: TaskEvent): void {
@@ -529,14 +643,28 @@ export function useLtxVideoGeneration(tabId: string) {
         state.value.info = event.info ?? null
         state.value.video = event.video ?? null
         state.value.status = 'done'
+        finalizeCurrentRun('completed', {
+          taskId: state.value.taskId,
+          thumbnail: Array.isArray(event.images) && event.images.length > 0 ? event.images[0] : null,
+        })
         break
       case 'error':
         clearResumeState(key)
+        finalizeCurrentRun(state.value.cancelRequested ? 'cancelled' : 'error', {
+          taskId: state.value.taskId,
+          errorMessage: String(event.message || 'Task failed.'),
+        })
         setError(String(event.message || 'Task failed.'))
         break
       case 'end':
         clearResumeState(key)
         if (state.value.status !== 'error') state.value.status = 'done'
+        if (state.value.currentRun && state.value.status === 'done') {
+          finalizeCurrentRun('completed', {
+            taskId: state.value.taskId,
+            thumbnail: state.value.frames[0] ?? null,
+          })
+        }
         stopStream()
         break
     }
@@ -558,9 +686,25 @@ export function useLtxVideoGeneration(tabId: string) {
       const taskId = String(response.task_id || '').trim()
       if (!taskId) throw new Error('Backend returned an empty task id for LTX video generation.')
       state.value.taskId = taskId
+      state.value.currentRun = {
+        taskId,
+        mode: run.mode,
+        createdAtMs: run.createdAtMs,
+        summary: run.summary,
+        promptPreview: run.promptPreview,
+        paramsSnapshot: run.paramsSnapshot,
+      }
 
       const key = resumeKey(tabId)
-      saveResumeState(key, { taskId, lastEventId: 0, mode: run.mode })
+      saveResumeState(key, {
+        taskId,
+        lastEventId: 0,
+        mode: run.mode,
+        createdAtMs: run.createdAtMs,
+        summary: run.summary,
+        promptPreview: run.promptPreview,
+        paramsSnapshot: run.paramsSnapshot,
+      })
       const unsub = subscribeTask(taskId, onTaskEvent, undefined, {
         onMeta: ({ eventId }) => {
           if (typeof eventId === 'number') updateResumeEventId(key, eventId)
@@ -641,10 +785,18 @@ export function useLtxVideoGeneration(tabId: string) {
         state.value.info = result.result.info ?? null
         state.value.video = result.result.video ?? null
         state.value.status = 'done'
+        finalizeCurrentRun('completed', {
+          taskId,
+          thumbnail: Array.isArray(result.result.images) && result.result.images.length > 0 ? result.result.images[0] : null,
+        })
         return
       }
 
       if (result.status === 'error') {
+        finalizeCurrentRun(state.value.cancelRequested ? 'cancelled' : 'error', {
+          taskId,
+          errorMessage: String(result.error || 'Task failed.'),
+        })
         setError(String(result.error || 'Task failed.'))
       }
     } catch {
@@ -709,16 +861,26 @@ export function useLtxVideoGeneration(tabId: string) {
     clearResumeState(key)
 
     if (result.status === 'completed' && result.result) {
+      ensureCurrentRunFromResume(saved)
       state.value.frames = Array.isArray(result.result.images) ? result.result.images : []
       state.value.info = result.result.info ?? null
       state.value.video = result.result.video ?? null
       state.value.status = 'done'
       state.value.taskId = saved.taskId
+      finalizeCurrentRun('completed', {
+        taskId: saved.taskId,
+        thumbnail: Array.isArray(result.result.images) && result.result.images.length > 0 ? result.result.images[0] : null,
+      })
       return
     }
 
     if (result.status === 'error') {
+      ensureCurrentRunFromResume(saved)
       state.value.taskId = saved.taskId
+      finalizeCurrentRun('error', {
+        taskId: saved.taskId,
+        errorMessage: String(result.error || 'Task failed.'),
+      })
       setError(String(result.error || 'Task failed.'))
       return
     }
@@ -757,6 +919,9 @@ export function useLtxVideoGeneration(tabId: string) {
     taskId: computed(() => state.value.taskId),
     isRunning: computed(() => state.value.status === 'running'),
     cancelRequested: computed(() => state.value.cancelRequested),
+    history: computed(() => state.value.history),
+    selectedTaskId: computed(() => state.value.selectedTaskId),
+    historyLoadingTaskId: computed(() => state.value.historyLoadingTaskId),
     tab,
     params,
     mode,
@@ -773,6 +938,44 @@ export function useLtxVideoGeneration(tabId: string) {
     generate,
     stopStream,
     cancel,
+    loadHistory: async (taskId: string) => {
+      if (!taskId || state.value.status === 'running') return
+      state.value.historyLoadingTaskId = taskId
+      try {
+        const result = await fetchTaskResult(taskId)
+        if (result.status === 'error') {
+          state.value.status = 'error'
+          state.value.errorMessage = result.error || 'Task failed.'
+          state.value.frames = []
+          state.value.info = null
+          state.value.video = null
+          state.value.taskId = taskId
+          state.value.selectedTaskId = taskId
+          state.value.currentRun = null
+          return
+        }
+        if (result.status === 'completed' && result.result) {
+          state.value.frames = Array.isArray(result.result.images) ? result.result.images : []
+          state.value.info = result.result.info ?? null
+          state.value.video = result.result.video ?? null
+          state.value.errorMessage = ''
+          state.value.status = 'done'
+          state.value.taskId = taskId
+          state.value.selectedTaskId = taskId
+          state.value.currentRun = null
+          return
+        }
+        setError('Task is still running.')
+      } catch (error) {
+        setError(error instanceof Error ? error.message : String(error))
+      } finally {
+        state.value.historyLoadingTaskId = ''
+      }
+    },
+    clearHistory: () => {
+      state.value.history = []
+      state.value.selectedTaskId = ''
+    },
     resumeNotice,
   }
 }

@@ -1027,7 +1027,30 @@ Symbols (top-level; keep in sync; no ghosts):
             />
           </RunCard>
 
-          <GenerationResultsPanel class="video-results-panel" :showMedia="Boolean(ltx.videoUrl)" :showInfo="Boolean(ltx.info)">
+          <GenerationResultsPanel class="video-results-panel" showHistory :showMedia="Boolean(ltx.videoUrl)" :showInfo="Boolean(ltx.info)">
+            <template #header-right>
+              <button class="btn btn-sm btn-outline" type="button" :disabled="ltx.workflowBusy" @click="ltx.sendToWorkflows">
+                {{ ltx.workflowBusy ? 'Saving…' : 'Save snapshot' }}
+              </button>
+              <button class="btn btn-sm btn-outline" type="button" @click="ltx.copyCurrentParams">Copy params</button>
+            </template>
+
+            <template #history-actions>
+              <button class="btn btn-sm btn-ghost" type="button" title="Clear history" :disabled="!ltx.history.length || ltx.isRunning" @click="ltx.clearHistory">
+                Clear
+              </button>
+            </template>
+
+            <template #history>
+              <ResultsHistoryStrip
+                :items="ltx.history"
+                :selectedTaskId="ltx.selectedTaskId"
+                :formatTitle="ltx.formatHistoryTitle"
+                :toDataUrl="ltx.toDataUrl"
+                @select="ltx.onSelectHistoryItem"
+              />
+            </template>
+
             <template #media-actions>
               <button v-if="ltx.videoUrl" class="btn btn-sm btn-outline" type="button" @click="ltx.openResultVideoZoom">Zoom</button>
               <a v-if="ltx.videoUrl" class="btn btn-sm btn-outline" :href="ltx.videoUrl" target="_blank" rel="noreferrer">Open</a>

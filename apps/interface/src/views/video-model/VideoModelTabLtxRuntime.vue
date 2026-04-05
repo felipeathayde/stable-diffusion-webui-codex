@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Renderless LTX runtime helper for the canonical video tab view.
 Mounts the existing LTX composable/watcher runtime under a view-local seam and exposes reactive slot props to `VideoModelTab.vue`,
-while keeping the route-owned video view as the only live body/layout owner.
+while keeping the route-owned video view as the only live body/layout owner and wiring compact LTX results/history actions into the shared WAN-baseline
+Results surface.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `VideoModelTabLtxRuntime` (component): Renderless LTX runtime helper for `VideoModelTab.vue`.
@@ -18,6 +19,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `ensureExecutionProfileVisible` (function): Preserves stale persisted execution-profile values in the local selector option list.
 - `normalizeDimensionInput` / `normalizeFrameInput` (functions): Bound LTX geometry/frame edits to the truthful numeric domain without silently snapping alignment.
 - `setVideoZoomOpen` / `openResultVideoZoom` (functions): Parent-facing exported-video zoom visibility bridge setters.
+- `sendToWorkflows` / `copyCurrentParams` / `onSelectHistoryItem` (functions): Parent-facing Results header/history actions exposed to the shared WAN-baseline Results owner.
 - `slotProps` (const): Reactive slot-prop bundle exposed to `VideoModelTab.vue`.
 -->
 
@@ -39,13 +41,15 @@ import {
   LTX_TWO_STAGE_FINAL_DIM_ALIGNMENT,
   resolveLtxDimAlignmentForExecutionProfile,
 } from '../../api/payloads_ltx_video'
-import { useLtxVideoGeneration } from '../../composables/useLtxVideoGeneration'
+import { useLtxVideoGeneration, type LtxRunHistoryItem } from '../../composables/useLtxVideoGeneration'
 import { useResultsCard } from '../../composables/useResultsCard'
 import { useModelTabsStore, type LtxTabParams } from '../../stores/model_tabs'
+import { useWorkflowsStore } from '../../stores/workflows'
 
 const props = defineProps<{ tabId: string }>()
 
 const store = useModelTabsStore()
+const workflows = useWorkflowsStore()
 
 const {
   status,
@@ -58,15 +62,21 @@ const {
   tab,
   params,
   mode,
+  history,
+  selectedTaskId,
+  historyLoadingTaskId,
   ltxExecutionSurface,
   checkpointExecutionMetadata,
   blockedReason,
   generate,
   cancel,
+  loadHistory,
+  clearHistory,
   resumeNotice,
 } = useLtxVideoGeneration(props.tabId)
 
 const { notice: copyNotice, copyJson, formatJson, toast } = useResultsCard()
+const workflowBusy = ref(false)
 
 type ExecutionProfileOption = {
   value: string
@@ -308,6 +318,47 @@ function toDataUrl(image: GeneratedImage): string {
   return `data:image/${image.format};base64,${image.data}`
 }
 
+function formatVideoModeLabel(modeValue: unknown): string {
+  const normalized = String(modeValue ?? '').trim().toLowerCase()
+  if (normalized === 'img2vid') return 'Img2Vid'
+  if (normalized === 'txt2vid') return 'Txt2Vid'
+  return `Unsupported (${normalized || 'unknown'})`
+}
+
+function formatHistoryTitle(item: LtxRunHistoryItem): string {
+  const dt = new Date(item.createdAtMs || Date.now())
+  const hh = dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  return `${formatVideoModeLabel(item.mode)} · ${hh}`
+}
+
+async function sendToWorkflows(): Promise<void> {
+  if (!tab.value) return
+  workflowBusy.value = true
+  try {
+    await workflows.createSnapshot({
+      name: `${tab.value.title} — ${new Date().toLocaleString()}`,
+      source_tab_id: tab.value.id,
+      type: tab.value.type,
+      engine_semantics: tab.value.type,
+      params_snapshot: params.value as unknown as Record<string, unknown>,
+    })
+    toast('Snapshot saved to Workflows.')
+  } catch (error) {
+    toast(error instanceof Error ? error.message : String(error))
+  } finally {
+    workflowBusy.value = false
+  }
+}
+
+async function copyCurrentParams(): Promise<void> {
+  if (!params.value) return
+  await copyJson(params.value as unknown as Record<string, unknown>, 'Copied params.')
+}
+
+async function onSelectHistoryItem(item: { taskId: string }): Promise<void> {
+  await loadHistory(item.taskId)
+}
+
 const slotProps = computed(() => ({
   tab: tab.value,
   params: params.value,
@@ -320,9 +371,13 @@ const slotProps = computed(() => ({
   videoZoomOpen: videoZoomOpen.value,
   errorMessage: errorMessage.value,
   isRunning: isRunning.value,
+  history: history.value,
+  selectedTaskId: selectedTaskId.value,
+  historyLoadingTaskId: historyLoadingTaskId.value,
   checkpointExecutionMetadata: checkpointExecutionMetadata.value,
   copyNotice: copyNotice.value,
   resumeNotice: resumeNotice.value,
+  workflowBusy: workflowBusy.value,
   dimensionAlignment: dimensionAlignment.value,
   executionProfileOptions: executionProfileOptions.value,
   dimensionWarning: dimensionWarning.value,
@@ -342,6 +397,11 @@ const slotProps = computed(() => ({
   clearInit,
   openResultVideoZoom,
   setVideoZoomOpen,
+  sendToWorkflows,
+  copyCurrentParams,
+  onSelectHistoryItem,
+  clearHistory,
+  formatHistoryTitle,
   normalizeDimensionInput,
   normalizeFrameInput,
   normalizePositiveInt,

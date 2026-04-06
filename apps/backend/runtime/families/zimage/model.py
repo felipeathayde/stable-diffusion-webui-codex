@@ -41,6 +41,7 @@ from apps.backend.runtime.logging import get_backend_logger
 import logging
 import math
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Optional, Tuple, Dict
 
 import torch
@@ -737,6 +738,11 @@ class ZImageTransformer2DModel(nn.Module):
                 out_bias=out_bias,
             )
         self.config = config
+        self.codex_config = SimpleNamespace(
+            in_channels=int(config.latent_channels),
+            context_dim=int(config.context_dim),
+            adm_in_channels=None,
+        )
         self.time_scale = float(getattr(config, "t_scale", float(time_scale)))
         
         self.patch_size = config.patch_size

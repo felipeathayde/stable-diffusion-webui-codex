@@ -901,6 +901,7 @@ def generate_img2img(
                 raise NotImplementedError(
                     "SUPIR mode does not support masked img2img fill modes 'latent noise' or 'latent nothing' in tranche 1"
                 )
+        include_masked_image_conditioning = classic_backend == "sd"
 
         mask_region_split = bool(getattr(processing, "mask_region_split", False))
         if mask_region_split:
@@ -946,6 +947,7 @@ def generate_img2img(
                         processing,
                         plan,
                         enforce_mode=enforcement,
+                        include_image_conditioning=include_masked_image_conditioning,
                     )
                     if masked_bundle.full_res is None:
                         raise RuntimeError("mask_region_split requires an inpaint crop plan (internal bug)")
@@ -1055,6 +1057,7 @@ def generate_img2img(
             processing,
             plan,
             enforce_mode=enforcement,
+            include_image_conditioning=include_masked_image_conditioning,
         )
         processing.init_latent = masked_bundle.init_latent
         processing.image_conditioning = masked_bundle.image_conditioning

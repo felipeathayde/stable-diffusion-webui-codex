@@ -122,6 +122,12 @@
     margin: 0;
     padding: 0;
     border: 0;
+    display: flex;
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    gap: 0.5rem 0.8rem;
+    align-items: flex-end;
+    width: 100%;
   }
   
   .qs-pair { 

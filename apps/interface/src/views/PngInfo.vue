@@ -572,6 +572,18 @@ function buildImageParamsPatch(options: { mode: TargetMode; includeInitImage: bo
     Object.assign(patch, buildUseInitImagePatch(false))
   } else if (options.includeInitImage) {
     Object.assign(patch, buildUseInitImagePatch(true))
+    patch.initSource = {
+      ...(targetTab.value?.params.initSource ?? {
+        mode: 'img',
+        folderPath: '',
+        selectionMode: 'all',
+        count: 1,
+        order: 'random',
+        sortBy: 'name',
+        useCrop: false,
+      }),
+      mode: 'img',
+    }
     patch.initImageData = previewDataUrl.value
     patch.initImageName = selectedFile.value?.name || ''
   } else {

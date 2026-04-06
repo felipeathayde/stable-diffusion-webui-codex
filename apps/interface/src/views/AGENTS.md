@@ -17,6 +17,7 @@ Status: Active
 - 2026-03-25: `ImageModelTab.vue` now exposes the generic first-pass swap stage via `SwapStageSettingsCard.vue` on txt2img only (`params.swapModel`), keeps `params.hires.swapModel` as the second-pass whole-engine selector, and disables the global swap stage when the tab enters img2img so no hidden active first-pass swap survives.
 - 2026-03-03: `Home.vue` Docs & Help reference paths now point only to repo-shipped docs under `apps/**` and root docs (`SUBSYSTEM-MAP.md`, `apps/**/AGENTS.md`), with no `.sangoi` path mentions.
 - 2026-03-06: `Home.vue` and `ModelsList.vue` tab-creation selectors include `flux2`; `PngInfo.vue` treats `flux2` tabs as path-labeled VAE consumers; `ImageModelTab.vue` persists per-tab profiles under a dedicated `flux2` key, preserves capability-driven img2img state, resolves FLUX.2 CFG/negative-prompt semantics from the selected Klein 4B vs base-4B checkpoint, keeps FLUX.2 img2img denoise truthful/visible, and gates img2img hires through shared capability + mask policy (Kontext defaults remain FLUX.1-only).
+- `PngInfo.vue` and `ImageModelTab.vue` are writers of real image-tab init images. When either seam materializes `initImageData`, it must also set `initSource.mode='img'` in the same patch so shared INPAINT gating stays truthful.
 - All generation workspaces live under model tabs (`/models/:tabId`):
   - `ModelTabView.vue` mounts `VideoTabRouteView.vue` when `tab.type === 'wan' | 'ltx2'`.
   - `ModelTabView.vue` mounts `ImageModelTab.vue` when `tab.type` is `sd15|sdxl|flux1|flux2|chroma|zimage|anima`.

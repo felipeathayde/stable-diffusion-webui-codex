@@ -70,7 +70,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `onLtxModeChange` (function): Toggles the active LTX tab between `txt2vid` and `img2vid` from quick settings.
 - `onUseInitImageChange` (function): Toggles active image-tab mode between txt2img and img2img from quick settings.
 - `canShowModeToggles` (computed): Enables IMG2IMG/INPAINT quicksettings controls when the active image tab supports img2img.
-- `useMask` (computed): Reflects active image-tab inpaint toggle state (`tab.params.useMask`).
+- `useInitImage` / `useMask` / `hasInitImage` / `initSourceIsImg` (computed): Shared-header mode/source/materialized-image state for the active image tab.
 - `supirEnabled` / `canShowSupirToggle` / `supirSelectionState` (computed): Shared-header SUPIR toggle state, discoverability, and blocking contract for SDXL img2img/inpaint.
 - `supportsInpaint` (computed): Flags whether the active image-tab semantic capability truthfully supports mask/inpaint semantics.
 - `isActiveImageTabRunning` (computed): Tracks whether the active image tab currently has an in-flight generation task.
@@ -1399,6 +1399,11 @@ const hasInitImage = computed(() => {
   if (!tab) return false
   return String(tab.params.initImageData || '').trim().length > 0
 })
+const initSourceIsImg = computed(() => {
+  const tab = activeImageTab.value
+  if (!tab) return false
+  return String(tab.params.initSource.mode || '').trim().toLowerCase() === 'img'
+})
 const supportsInpaint = computed(() => Boolean(activeImageSurface.value?.supports_img2img_masking))
 const canShowSupirToggle = computed(() => (
   canToggleInitImage.value
@@ -1441,12 +1446,14 @@ const ltxRefreshTitle = computed(() => {
 const inpaintToggleDisabled = computed(() => (
   isActiveImageTabRunning.value
   || !useInitImage.value
+  || !initSourceIsImg.value
   || !hasInitImage.value
   || (!supportsInpaint.value && !useMask.value)
 ))
 const inpaintToggleTitle = computed(() => {
   if (isActiveImageTabRunning.value) return 'Cannot change INPAINT while generation is running.'
   if (!useInitImage.value) return 'Enable IMG2IMG first.'
+  if (!initSourceIsImg.value) return 'INPAINT requires the initial image source to be IMG.'
   if (!hasInitImage.value) return 'Select an init image first.'
   if (!supportsInpaint.value) {
     if (useMask.value) return 'INPAINT is not supported for the active img2img engine. Disable it to clear the stale mask state.'
@@ -1967,6 +1974,7 @@ async function onUseMaskChange(value: boolean): Promise<void> {
     if (!tab) return
     if (isActiveImageTabRunning.value) return
     if (!useInitImage.value) return
+    if (!initSourceIsImg.value) return
     if (!hasInitImage.value) return
     if (value && !supportsInpaint.value) return
     const patch: Partial<ImageBaseParams> = { useMask: Boolean(value) }

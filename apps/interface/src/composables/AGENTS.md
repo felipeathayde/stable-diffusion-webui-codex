@@ -28,6 +28,7 @@ Status: Active
 - 2025-12-27: Removed Checkpoints state from `usePromptCard` (PromptCard no longer renders the Checkpoints modal/button).
 - 2025-12-25: `useResultsCard` encapsulates shared “Results” helpers (clipboard copy + ephemeral notice/toast + JSON formatting) so views don’t duplicate the same wiring.
 - 2025-12-27: Added `useModelTabNavigation` to bridge “Send to Img2Img/Inpaint” actions into `/models/:tabId` tabs by setting init-image params.
+- `useModelTabNavigation` must set `initSource.mode='img'` whenever it opens an image-family tab with a materialized init image; otherwise the destination tab can land in img2img with a stale folder-source owner and a falsely blocked INPAINT lane.
 - 2026-03-16: `useModelTabNavigation` now fails loud on unsupported video-family init-image routing and treats `ltx2` explicitly: opening an LTX tab with an init image synchronizes `mode='img2vid'` with `useInitImage=true` instead of relying on image-tab patch semantics.
 - 2026-01-01: `useGeneration(tabId)` now tracks live preview images from task progress events (`previewImage`/`previewStep`) and sets the initial stage to `starting` immediately on Generate click (so Results doesn’t read as “No results yet” during request setup).
 - 2026-01-02: `useGeneration(tabId)` now resolves the selected checkpoint to its short hash (when available) before sending requests.

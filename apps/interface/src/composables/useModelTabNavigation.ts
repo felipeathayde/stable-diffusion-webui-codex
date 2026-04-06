@@ -44,6 +44,9 @@ export function useModelTabNavigation(): {
       } else {
         const patch: Record<string, unknown> = {
           useInitImage: true,
+          initSource: {
+            mode: 'img',
+          },
           initImageData: options.initImage.dataUrl,
           initImageName: options.initImage.name,
         }

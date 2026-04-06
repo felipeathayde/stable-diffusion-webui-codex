@@ -2194,6 +2194,10 @@ async function sendToImg2Img(image: GeneratedImage): Promise<void> {
   const dataUrl = toDataUrl(image)
   const patch: Partial<ImageBaseParams> = {
     useInitImage: true,
+    initSource: {
+      ...params.value.initSource,
+      mode: 'img',
+    },
     initImageData: dataUrl,
     initImageName: `from_${props.type}.png`,
     useMask: false,

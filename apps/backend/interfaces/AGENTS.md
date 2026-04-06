@@ -31,7 +31,7 @@ Status: Active
 - 2025-12-06: `_bootstrap_runtime` agora pré-calcula o inventário de modelos (`apps.backend.inventory.cache.refresh()`) durante o bootstrap do backend, de forma que `/api/models/inventory` esteja quente quando a UI abrir o QuickSettings; a rota continua expondo `?refresh=true` e `POST /api/models/inventory/refresh` para rescans explícitos.
 - 2025-12-14: `/api/txt2vid` e `/api/img2vid` populam `steps` em `Txt2VidRequest/Img2VidRequest` e o plano de vídeo (`build_video_plan`) lê `guidance_scale` (alinhamento de contrato com o runtime).
 - 2025-12-16: Added `/api/vid2vid` (multipart: `video` upload + JSON `payload`) and `/api/output/{rel_path}` for root-scoped serving of exported videos.
-- 2026-02-28: `/api/vid2vid` is intentionally disabled in `generation.py` (HTTP 501 + `NotImplementedError`) until capability-driven router/runtime contract finalization; historical wan_animate notes remain implementation history only.
+- 2026-02-28: `/api/vid2vid` is intentionally parked in `generation.py` (HTTP 400 + explicit placeholder detail) until capability-driven router/runtime contract finalization; historical wan_animate notes remain implementation history only.
 - 2025-12-19: `/api/tools/convert-gguf` expanded quantization menu and now accepts `tensor_type_overrides` (regex → quant per tensor) for mixed schemes and advanced tuning.
 - 2025-12-29: `/api/paths` now resolves `apps/paths.json` via `CODEX_ROOT` (required), keeping QuickSettings path-based filtering stable across launchers and CWD changes.
 - 2025-12-29: `run_api.py` no longer uses `os.getcwd()` for repo files (settings/blocks/tabs/workflows/presets/tmp); it uses the resolved project root so the backend behaves the same no matter where it’s launched from.

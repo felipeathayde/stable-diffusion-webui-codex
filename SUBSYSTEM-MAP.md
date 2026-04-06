@@ -179,7 +179,7 @@ Branch notes:
 ### vid2vid
 | Node | Owner | What happens here | Next |
 | --- | --- | --- | --- |
-| Public route | `apps/backend/interfaces/api/routers/generation.py` (`/api/vid2vid`) | Current public truth: the route is intentionally disabled and raises `501` while the capability-driven router/runtime contract is finalized. | end |
+| Public route | `apps/backend/interfaces/api/routers/generation.py` (`/api/vid2vid`) | Current public truth: the route is parked and fails fast with `400` before staging/task creation while no families are implemented. | end |
 | Dormant wrapper | `apps/backend/engines/wan22/wan22_14b.py` | In-tree wrapper hook still exists for the future re-enable path. | dormant use-case |
 | Dormant use-case | `apps/backend/use_cases/vid2vid.py` | Holds the bounded vid2vid execution owner once the public route is re-enabled. | dormant terminal result |
 

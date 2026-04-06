@@ -1,7 +1,7 @@
 # apps/interface/src/api Overview
 <!-- tags: frontend, api, payloads -->
 Date: 2025-10-28
-Last Review: 2026-03-30
+Last Review: 2026-04-05
 Status: Active
 
 ## Purpose
@@ -17,7 +17,7 @@ Status: Active
 - Reference: `.sangoi/reference/models/model-assets-selection-and-inventory.md` is the canonical “how models/assets are listed + selected” doc (inventory → SHA selection → backend resolution).
 - `payloads.ts` now carries both `extras.refiner` and nested `extras.hires.refiner`; `HiresOptionsSchema` includes `refiner` and the builder only emits it when enabled.
 - 2026-02-08: swap-model payload semantics now use `switch_at_step` (not `steps`) in both global and hires nested refiner payloads; frontend form state uses `swapAtStep`.
-- `payloads_video.ts` provides typed (Zod) payload builders for active WAN video endpoints (sha-first `txt2vid`/`img2vid`): stages use `model_sha` + optional `loras[]` entries (`{sha, weight?}`), TE/VAE use sha selection, builders guard against sentinel asset values (`Automatic`/`Built-in`), and the frontend no longer models dead vid2vid payloads or obsolete output toggles.
+- `payloads_video.ts` provides typed (Zod) payload builders for active WAN video endpoints (sha-first `txt2vid`/`img2vid`): `wan_high` is selector-only (`model_sha` + optional `loras[]` + `flow_shift`), `wan_low` keeps the live second-stage execution fields, TE/VAE use sha selection, builders guard against sentinel asset values (`Automatic`/`Built-in`), and the frontend no longer models dead vid2vid payloads or obsolete output toggles.
 - 2026-03-23: `payloads_ltx_video.ts` now treats LTX as a checkpoint-aware execution-profile lane instead of a raw sampler surface: dimensions must already satisfy the strict `32px` grid for base lanes, while `two_stage` keeps width/height as final output dimensions and therefore requires both divisible by `64`; frame counts must already satisfy `8n+1`, `settings_revision` / `steps` / `fps` / `seed` / `cfgScale` must already be valid, invalid values fail loud, and the builder emits the canonical generic selectors plus explicit `ltx_execution_profile` only. The router derives the live `euler` / `simple` runtime lane from that profile. LTX `img2vid` still does not emit a denoise field because the backend generic route does not accept one today.
 - 2026-03-26: `payloads_ltx_video.ts` now treats `executionProfile` as an exact token owner for LTX: builders do not lowercase or remap stale profile ids, `two_stage` stays the only extra canonical profile beyond `one_stage` / `distilled`, and request payloads never backfill from legacy `sampler` / `scheduler` state.
 - 2026-03-13: `types.ts` task contracts now expose `gap.last_event_id`, and video-capable task results may omit `images` when the backend returns only a saved video artifact; image-only callers keep local array fallbacks instead of pretending every task result carries frames.
@@ -29,16 +29,17 @@ Status: Active
 - `EngineCapabilitiesResponse` is served by `/api/engines/capabilities`; it includes:
   - `asset_contracts` (base + core-only; now includes `tenc_slots`/`tenc_slot_labels` for slot-accurate requirements)
   - `engine_id_to_semantic_engine` (explicit key-space mapping; required by frontend taxonomy resolution)
+  - optional `parked_exact_engines` (exact parked-placeholder ids such as `sd35` / `netflix_void` / `svd` / `hunyuan_video`; these must not also appear in runnable maps)
   - `dependency_checks` (backend-owned readiness rows per semantic engine; strict `ready === all(check.ok)` contract)
 - 2026-03-07: `types.ts` `EngineCapabilities` sampler/scheduler recommendation fields are `recommended_samplers` / `recommended_schedulers`.
 - 2026-03-09: `types.ts` `FamilyCapabilities` now preserves optional family-scoped sampling filters from `/api/engines/capabilities` (`supported_samplers`, `supported_schedulers`, `excluded_samplers`, `excluded_schedulers`) for frontend family-aware sampler/scheduler gating.
-- `/api/samplers` DTO is `{name,supported,default_scheduler,allowed_schedulers}`; `supported` means executable backend support and `client.ts::fetchSamplers()` filters out `supported=false` rows before UI selector use. WAN payload builders fail fast on non-canonical (uppercase) sampler inputs and reject any scheduler value other than exact canonical `simple`; emitted WAN scheduler fields remain explicit at both top level (`*_scheduler`) and stage level (`wan_high.scheduler` / `wan_low.scheduler`) for router/runtime validation.
+- `/api/samplers` DTO is `{name,supported,default_scheduler,allowed_schedulers}`; `supported` means executable backend support and `client.ts::fetchSamplers()` filters out `supported=false` rows before UI selector use. WAN payload builders fail fast on non-canonical (uppercase) sampler inputs and reject any scheduler value other than exact canonical `simple`; emitted WAN scheduler fields remain explicit at top level (`*_scheduler`) and only on the live second-stage owner (`wan_low.scheduler`).
 - 2025-12-16: WAN video client helpers include task-event/result handling with optional `video { rel_path, mime }` export descriptor for `/api/output/{rel_path}`.
 - 2026-01-27: WAN payload builders now optionally emit `video_return_frames` (default off) to control whether txt2vid/img2vid results include frames.
 - 2026-02-15: Image/video payload contracts now always include `settings_revision`; per-request `smart_offload`/`smart_fallback`/`smart_cache` fields were removed (runtime flags remain `/api/options`-owned).
 - 2026-02-15: `client.ts` now caches `/api/options` revision and preserves structured HTTP error payloads (`status/detail/body`) so composables can handle stale-revision `409` conflicts.
 - 2026-02-17: `payloads_video.ts` now normalizes WAN frame counts to the `4n+1` domain within `[9,401]`, emits `gguf_attention_mode` (`global|sliding`), and supports windowed img2vid temporal controls (`img2vid_window_*`, `img2vid_anchor_alpha`, `img2vid_chunk_seed_mode`).
-- 2026-02-21: `payloads_video.ts` stage payload schema now accepts stage-scoped prompt fields (`wan_high.prompt/negative_prompt`, `wan_low.prompt/negative_prompt`); top-level mode prompt fields are derived from the High stage prompt at build time (fail-loud when High prompt is empty).
+- 2026-02-21: `payloads_video.ts` now keeps the top-level WAN prompt/negative owners on `txt2vid_*` / `img2vid_*`, while `wan_low.prompt/negative_prompt` remains the explicit second-stage prompt owner; WAN High LoRAs are still derived from top-level prompt tags at build time.
 - 2026-02-21: `payloads_video.ts` img2vid temporal contract now requires `img2vid_mode` (`solo|sliding|svi2|svi2_pro`), with mode-scoped validation for window controls (`img2vid_window_frames/stride/commit_frames`) and fail-loud rejection of mode/field mismatches.
 - 2026-02-22: `payloads_video.ts` now supports `img2vid_mode='svi2'|'svi2_pro'` with the same windowed contract as sliding; temporal normalization is centralized in `utils/wan_img2vid_temporal.ts` (`stride % 4 == 0`, `commit >= stride + 4`).
 - 2026-02-22: `payloads_video.ts` now includes optional `img2vid_reset_anchor_to_base` for windowed img2vid modes and enforces fail-loud `false` for `svi2|svi2_pro`; builders map `WanImg2VidInput.resetAnchorToBase` directly to payload field.
@@ -68,7 +69,7 @@ Status: Active
 - 2026-02-08: `payloads.ts` now falls back `extras.hires.{prompt,negative_prompt}` to base prompts when hires prompt overrides are blank.
 - 2026-02-18: `types.ts` `EngineCapabilities` now includes optional `guidance_advanced` (`GuidanceAdvancedCapabilities`) so image tabs can render CFG Advanced/APG controls strictly from backend capability contract.
 - 2026-03-31: `types.ts` `EngineCapabilities` now includes explicit `supports_img2img_masking`; frontend img2img/inpaint gating must consume the backend capability surface instead of frontend taxonomy blocklists.
-- 2026-02-21: `client.ts` no longer exports `startVid2Vid`; frontend WAN generation dispatch is restricted to `startTxt2Vid`/`startImg2Vid` while backend vid2vid remains disabled (501).
+- 2026-02-21: `client.ts` no longer exports `startVid2Vid`; frontend WAN generation dispatch is restricted to `startTxt2Vid`/`startImg2Vid` while backend `/api/vid2vid` remains parked at the router seam (HTTP 400 placeholder).
 - 2026-03-02: `types.ts` task progress contracts now expose optional `message` + `data` on both streaming `TaskEvent.progress` and polled `TaskResult.progress`, enabling frontend consumption of backend total-progress metadata without schema drift.
 - 2026-03-03: Model add-path wrappers now keep scan rows minimal (`name/path/ext` only; no SHA/type) via `scanModelPath` (`POST /api/models/path-scan`), while `addModelPathItem` (`POST /api/models/path-add`) and `addModelPathItemsAll` (`POST /api/models/path-add-all`) remain SHA-at-add sequential add operations.
 - 2026-03-04: `types.ts` add-path contracts now use explicit nullable byte metadata (`ModelPathSizeBytes = number | null`) with non-optional `ModelPathScanItem.size_bytes` / `already_in_library`, and `ModelPathAddAllResult.item` now uses a dedicated `ModelPathAddAllErrorItem` fallback contract for fail-loud byte-progress consumers.

@@ -29,7 +29,7 @@ Use `Jump to` to open the bounded section in `SUBSYSTEM-MAP.md`, then follow the
 | Pipeline | image_automation | infinite generate; repeat loop; batch method | [image_automation](SUBSYSTEM-MAP.md#map-pipeline-image-automation) | `apps/backend/use_cases/image_automation.py` |
 | Pipeline | txt2vid | text-to-video | [txt2vid](SUBSYSTEM-MAP.md#map-pipeline-txt2vid) | `apps/backend/use_cases/txt2vid.py` |
 | Pipeline | img2vid | image-to-video | [img2vid](SUBSYSTEM-MAP.md#map-pipeline-img2vid) | `apps/backend/use_cases/img2vid.py` |
-| Pipeline | vid2vid | video-to-video; WAN animate rewrite lane | [vid2vid](SUBSYSTEM-MAP.md#map-pipeline-vid2vid) | `apps/backend/use_cases/vid2vid.py` |
+| Pipeline | vid2vid | video-to-video; parked public route; WAN animate dormant lane | [vid2vid](SUBSYSTEM-MAP.md#map-pipeline-vid2vid) | `apps/backend/use_cases/vid2vid.py` |
 | Pipeline | API bootstrap | FastAPI mount; router registration; shared bootstrap logging handoff | [API bootstrap](SUBSYSTEM-MAP.md#map-pipeline-api-bootstrap) | `apps/backend/interfaces/api/run_api.py` |
 
 ## Owner Seams

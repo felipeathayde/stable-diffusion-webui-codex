@@ -1,7 +1,7 @@
 # apps/backend/engines Overview
 <!-- tags: backend, engines, registry, lazy-imports -->
 Date: 2025-12-05
-Last Review: 2026-04-03
+Last Review: 2026-04-05
 Status: Active
 
 ## Purpose
@@ -28,7 +28,7 @@ Status: Active
 - 2026-01-04: Flux.1-family engine keys are `flux1` / `flux1_kontext` / `flux1_chroma` (no legacy aliases); FLUX.2 now uses the separate `flux2` engine key.
 - 2026-01-06: `common.base` VAE overrides (`vae_path`) now unwrap wrapper VAEs via `first_stage_model` before applying state dicts.
 - 2026-01-18: `register_default_engines(...)` now registers `flux1_chroma` alongside `flux1`/`flux1_kontext` so the canonical Chroma engine key is available to API callers without manual registration.
-- 2026-04-03: Added the dedicated `netflix_void/` engine package plus default registration key `netflix_void`. This seam is still a fail-loud staging scaffold: it resolves the explicit base-bundle + literal Pass 1/Pass 2 overlay contract through the dedicated family runtime and delegates canonical task ownership to `use_cases/vid2vid.py`, but the native Pass 1 -> warped-noise -> Pass 2 execution path is not yet ported.
+- 2026-04-05: `netflix_void` remains a dedicated engine package, but it is now an explicit parked placeholder: `register_default_engines(...)` no longer registers it, `registration.register_netflix_void(...)` raises `NotImplementedError`, and the engine class itself stays as a fail-loud stub until the native vid2vid runtime is implemented.
 - 2026-01-31: Image-mode wrappers are now fully owned by `apps/backend/use_cases/` (txt2img + img2img); engines delegate via `CodexDiffusionEngine`. The common base also provides default first-stage VAE encode/decode for image engines (WAN/video keep explicit overrides).
 - 2026-01-31: Engine-common helpers expanded to reduce drift:
   - Generic conditioning cache helpers (overrideable per call) + shared tensor move helpers for CPU↔device caching.

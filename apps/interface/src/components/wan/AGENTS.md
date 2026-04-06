@@ -9,8 +9,7 @@ Status: Active
 
 ## Key Files
 - `WanStagePanel.vue` — High/Low stage controls (sampler/scheduler/steps/cfg/seed + optional flow-shift), no stage-level LoRA controls.
-- `WanStageLoraField.vue` — Legacy stage-level LoRA selector component (currently not wired by `WanStagePanel.vue`).
-- `WanSubHeader.vue` — Small section sub-header used by `WANTab.vue` to keep “Video / High / Low” headers consistent.
+- `WanSubHeader.vue` — Small section sub-header used by WAN surfaces to keep “Video / High / Low” headers consistent.
 - `WanVideoOutputPanel.vue` — Video export, interpolation, and SeedVR2 upscaling controls (format/pix_fmt/loop/CRF/pingpong/return-frames + interpolation output-FPS + compact upscaling section with advanced knobs).
 
 ## Notes
@@ -23,7 +22,7 @@ Status: Active
 - 2025-12-23: WAN panels use shared gen-card layout primitives (`gc-row`, `gc-col`, `row-split`) and the `gen-card--embedded` variant; do not reintroduce parallel `wan22-*` or `cdx-form-row` layout helper layers.
 - 2025-12-23: `WanStagePanel.vue` renders Steps/CFG via `components/ui/SliderField.vue` (label+input header, slider below) for parity with the rest of the WebUI.
 - 2025-12-23: WAN sliders use `cdx-input-w-md` sizing (removes WAN-only `w-step/w-cfg` CSS).
-- 2025-12-26: `WanStagePanel.vue` now places Sampler/Scheduler/Steps on the first row and Seed/CFG on the second; LoRA UI was extracted into `WanStageLoraField.vue`.
+- 2025-12-26: `WanStagePanel.vue` now places Sampler/Scheduler/Steps on the first row and Seed/CFG on the second; stage LoRA UI no longer has a dedicated component owner in this folder.
 - 2025-12-28: Added `WanSubHeader.vue` and made `WanVideoOutputPanel.vue` embeddable (so WANTab can compose “Video Output” without nested card borders); Interpolation (RIFE) is now a single toggle button.
 - 2025-12-29: `WanVideoOutputPanel.vue` renders the RIFE toggle inline with the other output toggles (Ping-pong/Save/Trim) for layout parity.
 - 2026-01-03: Added standardized file header blocks to WAN components (doc-only change; part of rollout).

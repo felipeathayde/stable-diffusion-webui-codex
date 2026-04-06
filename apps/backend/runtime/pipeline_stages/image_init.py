@@ -137,7 +137,7 @@ def prepare_init_bundle(processing: Any) -> InitImageBundle:
     bundle = InitImageBundle(
         tensor=tensor,
         latents=latents,
-        mask=getattr(processing, "image_mask", None) or getattr(processing, "mask", None),
+        mask=getattr(processing, "mask", None),
         mode="latent",
     )
     return bundle

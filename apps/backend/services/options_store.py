@@ -8,7 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: JSON-backed options store for backend and launchers.
 Provides a small, typed facade over `apps/settings_values.json` so the API, runtime helpers, and launcher profile defaults can share a single
-source of truth without importing legacy/compat shims. Includes per-component storage/compute dtype override keys (core/TE/VAE).
+source of truth without importing legacy/compat shims. Includes one runtime main-device option plus per-component storage/compute dtype override keys.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `SETTINGS_PATH` (constant): Absolute path to `apps/settings_values.json` under the repo root.
@@ -169,13 +169,11 @@ def set_values(payload: Mapping[str, Any]) -> list[str]:
 class OptionsSnapshot:
     codex_options_revision: int = 0
     codex_export_video: bool = False
-    codex_core_device: str = "auto"
+    codex_main_device: str = "auto"
     codex_core_dtype: str = "auto"
     codex_core_compute_dtype: str = "auto"
-    codex_te_device: str = "auto"
     codex_te_dtype: str = "auto"
     codex_te_compute_dtype: str = "auto"
-    codex_vae_device: str = "auto"
     codex_vae_dtype: str = "auto"
     codex_vae_compute_dtype: str = "auto"
     codex_smart_offload: bool = False
@@ -187,13 +185,11 @@ class OptionsSnapshot:
         return {
             OPTIONS_REVISION_KEY: self.codex_options_revision,
             "codex_export_video": self.codex_export_video,
-            "codex_core_device": self.codex_core_device,
+            "codex_main_device": self.codex_main_device,
             "codex_core_dtype": self.codex_core_dtype,
             "codex_core_compute_dtype": self.codex_core_compute_dtype,
-            "codex_te_device": self.codex_te_device,
             "codex_te_dtype": self.codex_te_dtype,
             "codex_te_compute_dtype": self.codex_te_compute_dtype,
-            "codex_vae_device": self.codex_vae_device,
             "codex_vae_dtype": self.codex_vae_dtype,
             "codex_vae_compute_dtype": self.codex_vae_compute_dtype,
             "codex_smart_offload": self.codex_smart_offload,
@@ -216,13 +212,11 @@ def get_snapshot() -> OptionsSnapshot:
     return OptionsSnapshot(
         codex_options_revision=get_revision(v),
         codex_export_video=_coerce_bool(v.get("codex_export_video"), key="codex_export_video", default=False),
-        codex_core_device=_str_value("codex_core_device", "auto"),
+        codex_main_device=_str_value("codex_main_device", "auto"),
         codex_core_dtype=_str_value("codex_core_dtype", "auto"),
         codex_core_compute_dtype=_str_value("codex_core_compute_dtype", "auto"),
-        codex_te_device=_str_value("codex_te_device", "auto"),
         codex_te_dtype=_str_value("codex_te_dtype", "auto"),
         codex_te_compute_dtype=_str_value("codex_te_compute_dtype", "auto"),
-        codex_vae_device=_str_value("codex_vae_device", "auto"),
         codex_vae_dtype=_str_value("codex_vae_dtype", "auto"),
         codex_vae_compute_dtype=_str_value("codex_vae_compute_dtype", "auto"),
         codex_smart_offload=_coerce_bool(v.get("codex_smart_offload"), key="codex_smart_offload", default=False),

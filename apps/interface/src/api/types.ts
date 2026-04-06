@@ -52,7 +52,10 @@ Symbols (top-level; keep in sync; no ghosts):
 - `FamilyCapabilities` (interface): Per-family capability flags from backend (`families`) used to gate prompt/clip controls and optional sampler/scheduler support/exclusion lists.
 - `EngineDependencyCheckRow` (interface): One dependency-check row returned by backend readiness contract.
 - `EngineDependencyStatus` (interface): Aggregated dependency status (`ready + checks`) for one semantic engine.
+- `ParkedExactEngineStatus` (interface): Public placeholder state for an exact parked engine id.
 - `EngineCapabilitiesResponse` (interface): `/api/engines/capabilities` response shape.
+- `WorkflowItem` (interface): One persisted workflow snapshot row from `/api/ui/workflows`.
+- `WorkflowCreateResponse` / `WorkflowUpdateResponse` / `WorkflowDeleteResponse` (interfaces): Workflow mutation receipts from `/api/ui/workflows`.
 - `PromptTokenCountRequest` (interface): Request payload for `/api/models/prompt-token-count`.
 - `PromptTokenCountResponse` (interface): Response payload for `/api/models/prompt-token-count`.
 - `EngineAssetContract` (interface): Per-engine asset requirements contract exposed by the backend (VAE/text encoders).
@@ -536,12 +539,18 @@ export interface EngineDependencyStatus {
   checks: EngineDependencyCheckRow[]
 }
 
+export interface ParkedExactEngineStatus {
+  status: 'not_implemented'
+  detail: string
+}
+
 export interface EngineCapabilitiesResponse {
   engines: Record<string, EngineCapabilities>
   families?: Record<string, FamilyCapabilities>
   smart_cache?: Record<string, { hits: number; misses: number }>
   asset_contracts?: Record<string, EngineAssetContractVariants>
   engine_id_to_semantic_engine: Record<string, string>
+  parked_exact_engines?: Record<string, ParkedExactEngineStatus>
   dependency_checks: Record<string, EngineDependencyStatus>
 }
 
@@ -705,7 +714,11 @@ export interface UiPresetApplyResponse { applied: boolean; model: string; checkp
 export interface ApiTabMeta { createdAt: string; updatedAt: string }
 export interface ApiTab { id: string; type: 'sd15' | 'sdxl' | 'flux1' | 'flux2' | 'zimage' | 'chroma' | 'wan' | 'anima' | 'ltx2'; title: string; order: number; enabled: boolean; params: Record<string, unknown>; meta: ApiTabMeta }
 export interface TabsResponse { version: number; tabs: ApiTab[] }
-export interface WorkflowsResponse { version: number; workflows: Array<{ id: string; name: string; source_tab_id: string; type: string; created_at: string; engine_semantics: string; params_snapshot: Record<string, unknown> }>}
+export interface WorkflowItem { id: string; name: string; source_tab_id: string; type: string; created_at: string; engine_semantics: string; params_snapshot: Record<string, unknown> }
+export interface WorkflowsResponse { version: number; workflows: WorkflowItem[] }
+export interface WorkflowCreateResponse { id: string }
+export interface WorkflowUpdateResponse { updated: string }
+export interface WorkflowDeleteResponse { deleted: string }
 
 // Model inventory (for populating selects)
 export interface InventoryResponse {

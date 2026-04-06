@@ -34,19 +34,21 @@ Enforces generation settings contracts: top-level `smart_*` payload keys are rej
 Uses backend API-owned WAN video request key allowlists from `interfaces/api/wan_video_request_keys.py`,
 resolves WAN variant engine keys from metadata repo/dir hints (`wan22_5b`/`wan22_14b`/`wan22_14b_animate`),
 and derives WAN sampler/scheduler defaults from metadata scheduler assets while validating `gguf_sdpa_policy` (`auto|mem_efficient|flash|math`) fail-loud.
+WAN video keeps top-level prompt/negative plus other core lane fields on the request owner, while `wan_high` stays selector-only
+(`model_sha`, `loras`, `flow_shift`) and `wan_low` remains the explicit second-stage execution owner.
 The generic LTX video route now owns its own request contract (checkpoint-owned `ltx_execution_profile`, `32px` base geometry or `%64` final geometry
 for `two_stage`, `8n+1` frames, explicit safe defaults, derived `euler` / `simple`, negative-seed random semantics, required `img2vid_init_image`,
 and rejection of WAN-only `*_styles` baggage plus raw LTX `*_sampler` / `*_scheduler` wire keys)
 instead of inheriting WAN `%16` / `4n+1` assumptions.
-Route-level capability validation now also understands `GenerationRouteMode.VID2VID`, and `/api/vid2vid` is reopened only for the
-capability-driven native `netflix_void` lane with mandatory source-video + quadmask staging.
+Route-level capability validation now also understands `GenerationRouteMode.VID2VID`, while `/api/vid2vid` itself remains a parked
+placeholder route that rejects before any staging/task creation.
 FLUX.2 img2img now accepts partial denoise (`img2img_denoising_strength != 1.0`) after backend support landed; masked FLUX.2 hires remains an explicit API reject.
 Legacy WAN sampler aliases (`txt2vid_sampling`/`img2vid_sampling`) are rejected; WAN keeps `txt2vid_sampler` and `img2vid_sampler` as its canonical request keys, while LTX derives its fixed runtime lane from explicit `ltx_execution_profile`.
 WAN sampler fields are strict at API parse-time: values must resolve to real WAN22 runtime lanes (`uni-pc` with metadata-compatible optional solver hint, `euler`, or `euler a`); scheduler fields remain strict (`simple`) for WAN22 requests.
 Img2vid temporal execution now requires explicit `img2vid_mode` (`solo|sliding|svi2|svi2_pro`) with mode-scoped validation for chunk/window fields,
 and no-stretch guide controls (`img2vid_image_scale`, `img2vid_crop_offset_x`, `img2vid_crop_offset_y`) are parsed into WAN extras for runtime preprocessing.
-Requires non-empty WAN stage prompts (`wan_high.prompt`, `wan_low.prompt`) for video routes; stage `negative_prompt` is optional and preserves
-missing vs explicit-empty semantics for downstream runtime fallback behavior. WAN stage LoRAs are provided via `wan_high/wan_low.loras[]`
+Requires a non-empty top-level WAN prompt owner and a non-empty `wan_low.prompt` second-stage prompt for video routes; top-level
+`negative_prompt` remains the high-stage negative owner while `wan_low.negative_prompt` is optional. WAN stage LoRAs are provided via `wan_high/wan_low.loras[]`
 (frontend parses `<lora:...>` tags) and duplicate stage entries are deduplicated by SHA (last wins).
 Video task workers emit optional contract-trace JSONL events (`CODEX_TRACE_CONTRACT=1`) with prompt hashing only (no raw prompt text) and
 resolve WAN core dtype overrides from persisted options (`codex_core_compute_dtype`/`codex_core_dtype`) before orchestrator dispatch.
@@ -202,7 +204,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         "img2img_neg_prompt",
         "img2img_noise_source",
         "img2img_prompt",
-        "img2img_randn_source",
         "img2img_resize_mode",
         "img2img_sampling",
         "img2img_scheduler",
@@ -275,7 +276,8 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         | _NETFLIX_VOID_VID2VID_CORE_KEYS
         | _VID2VID_INTERNAL_ALLOWED_KEYS
     )
-    _WAN_STAGE_ALLOWED_KEYS = set(WAN_VIDEO_REQUEST_KEYS.WAN_STAGE_ALLOWED)
+    _WAN_HIGH_ALLOWED_KEYS = set(WAN_VIDEO_REQUEST_KEYS.WAN_HIGH_ALLOWED)
+    _WAN_LOW_ALLOWED_KEYS = set(WAN_VIDEO_REQUEST_KEYS.WAN_LOW_ALLOWED)
     _WAN_STAGE_LORA_ALLOWED_KEYS = {"sha", "weight"}
     _ER_SDE_OPTION_KEYS = {"solver_type", "max_stage", "eta", "s_noise"}
     _GUIDANCE_OPTION_KEYS = {
@@ -1099,11 +1101,16 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         return storage_dtype, (compute_dtype if compute_dtype is not None else storage_dtype)
 
 
+    _PARKED_VID2VID_ROUTE_DETAIL = "/api/vid2vid is parked; no families are implemented yet."
+    _TXT2VID_BLANK_PROMPT_DETAIL = "'txt2vid_prompt' must be a non-empty string"
+    _IMAGE_AUTOMATION_EMPTY_LIST_DETAIL = "prompt_source.text must include at least one non-empty prompt line."
+
+
     def _reject_not_implemented_engine(engine_key: str, *, field_name: str) -> None:
-        if engine_key == "sd35":
+        if engine_key in {"sd35", "netflix_void", "svd", "hunyuan_video"}:
             raise HTTPException(
                 status_code=501,
-                detail=f"Engine '{field_name}=sd35' is temporarily disabled until SD3.5 conditioning/keymap port is finalized.",
+                detail=f"Engine '{field_name}={engine_key}' is not implemented yet.",
             )
 
 
@@ -2017,11 +2024,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         )
         if ip_adapter_payload is not None:
             extras["ip_adapter"] = ip_adapter_payload
-        if 'randn_source' in raw:
-            extras['randn_source'] = _parse_noise_source_field(
-                raw['randn_source'],
-                field_name="extras.randn_source",
-            )
         if 'eta_noise_seed_delta' in raw:
             val = raw['eta_noise_seed_delta']
             if isinstance(val, bool) or not isinstance(val, (int, float)):
@@ -2523,6 +2525,15 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 status_code=400,
                 detail=f"Engine '{engine_key}' does not support img2img masking/inpaint.",
             )
+
+    def _validate_pre_task_txt2vid_payload(payload: Mapping[str, Any]) -> None:
+        raw_engine = payload.get("engine")
+        engine_key = _canonical_engine_key(raw_engine) if raw_engine is not None else ""
+        if engine_key.startswith("wan22"):
+            return
+        raw_prompt = payload.get("txt2vid_prompt")
+        if not isinstance(raw_prompt, str) or not raw_prompt.strip():
+            raise HTTPException(status_code=400, detail=_TXT2VID_BLANK_PROMPT_DETAIL)
 
     def _resolve_image_family_capability_contract(
         engine_key: str,
@@ -3436,12 +3447,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         seed_val = _require_int_field(payload, "img2img_seed")
         clip_skip = _require_int_field(payload, "img2img_clip_skip", minimum=0, maximum=12) if "img2img_clip_skip" in payload else None
         noise_source: str | None = None
-        if "img2img_randn_source" in payload:
-            noise_source = _parse_noise_source_field(
-                payload.get("img2img_randn_source"),
-                field_name="img2img_randn_source",
-            )
-        elif "img2img_noise_source" in payload:
+        if "img2img_noise_source" in payload:
             noise_source = _parse_noise_source_field(
                 payload.get("img2img_noise_source"),
                 field_name="img2img_noise_source",
@@ -4171,13 +4177,10 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         (single-flight-safe).
         """
         for legacy_key in ("codex_device", "codex_diffusion_device"):
-            canonical = legacy_wan_video_request_key_alias_target(legacy_key)
-            if canonical != "device":
-                continue
             if legacy_key in payload:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Unsupported legacy device key: '{legacy_key}'. Use '{canonical}'.",
+                    detail=f"Unsupported legacy device key: '{legacy_key}'. Use 'device'.",
                 )
         policy = generation_route_device_policy(route_mode)
         try:
@@ -4332,6 +4335,10 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             prompt_text = prompt_source_raw.get("text")
             if prompt_text is not None and not isinstance(prompt_text, str):
                 raise HTTPException(status_code=400, detail="'prompt_source.text' must be a string when provided")
+            if prompt_kind == "list":
+                prompt_lines = [line.strip() for line in str(prompt_text or "").splitlines() if line.strip()]
+                if not prompt_lines:
+                    raise HTTPException(status_code=400, detail=_IMAGE_AUTOMATION_EMPTY_LIST_DETAIL)
             prompt_source = ImageAutomationPromptSource(
                 kind=prompt_kind,
                 text=prompt_text,
@@ -4679,11 +4686,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         _reject_legacy_hires_keys(payload)
 
         enable_hires = _require_bool_field(payload, "img2img_hires_enable") if "img2img_hires_enable" in payload else False
-        if enable_hires and engine_key == "flux2" and mask_image is not None:
+        if enable_hires and mask_image is not None:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "FLUX.2 img2img hires does not support masks/inpaint in this backend seam yet. "
+                    "img2img hires does not support masks/inpaint in this backend seam yet. "
                     "Disable hires or remove 'img2img_mask'."
                 ),
             )
@@ -4853,11 +4860,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     raw_extras["guidance"],
                     field_name="img2img_extras.guidance",
                 )
-            if "randn_source" in raw_extras:
-                raw_extras["randn_source"] = _parse_noise_source_field(
-                    raw_extras.get("randn_source"),
-                    field_name="img2img_extras.randn_source",
-                )
             if ip_adapter_payload is not None:
                 raw_extras["ip_adapter"] = ip_adapter_payload
 
@@ -4890,6 +4892,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     status_code=400,
                     detail="'img2img_extras.supir' cannot be combined with img2img hires in tranche 1.",
                 )
+            if mask_image is not None and inpainting_fill in {2, 3}:
+                raise HTTPException(
+                    status_code=400,
+                    detail="'img2img_extras.supir' with masks supports only 'img2img_inpainting_fill' values 0 or 1.",
+                )
             if isinstance(extras.get("swap_model"), dict):
                 raise HTTPException(
                     status_code=400,
@@ -4919,7 +4926,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 else:
                     extras["zimage_variant"] = variant
         if noise_source:
-            extras['randn_source'] = str(noise_source)
+            extras['noise_source'] = str(noise_source)
         if ensd_raw is not None:
             try:
                 extras['eta_noise_seed_delta'] = int(float(ensd_raw))
@@ -4976,7 +4983,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             "batch_count": batch_count,
         }
         if noise_source:
-            metadata["randn_source"] = str(noise_source)
+            metadata["noise_source"] = str(noise_source)
         if 'eta_noise_seed_delta' in extras:
             metadata["eta_noise_seed_delta"] = extras['eta_noise_seed_delta']
 
@@ -5151,18 +5158,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 status_code=400,
                 detail=public_http_error_detail(exc, fallback="Invalid video export options"),
             ) from exc
-        if video_options:
-            extras["video"] = {
-                "video_filename_prefix": payload.get("video_filename_prefix"),
-                "video_format": payload.get("video_format"),
-                "video_pix_fmt": payload.get("video_pix_fmt"),
-                "video_crf": payload.get("video_crf"),
-                "video_loop_count": payload.get("video_loop_count"),
-                "video_pingpong": payload.get("video_pingpong"),
-                "video_save_metadata": payload.get("video_save_metadata"),
-                "video_save_output": payload.get("video_save_output"),
-                "video_trim_to_audio": payload.get("video_trim_to_audio"),
-            }
         video_interpolation = _optional_video_interpolation_field(payload)
         if video_interpolation is not None:
             extras["video_interpolation"] = video_interpolation
@@ -5207,12 +5202,23 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         def _require_sha_field(key: str) -> str:
             return _require_sha256_field(payload, key)
 
+        high_prompt, high_negative_prompt, high_prompt_stage_loras = _parse_wan_stage_prompt_loras(
+            stage_key="wan_high",
+            prompt=str(prompt or "").strip(),
+            negative_prompt=str(negative_prompt or "").strip(),
+        )
+        if not high_prompt:
+            raise HTTPException(status_code=400, detail="'txt2vid_prompt' resolved empty after WAN LoRA parsing")
+        prompt = high_prompt
+        negative_prompt = high_negative_prompt
+
         def _resolve_wan_stage(stage_key: str) -> dict[str, object]:
             raw = payload.get(stage_key)
             if not isinstance(raw, dict):
                 raise HTTPException(status_code=400, detail=f"'{stage_key}' is required and must be an object")
             _reject_legacy_wan_stage_lora_keys(stage_key=stage_key, stage_raw=raw)
-            _reject_unknown_keys(raw, _WAN_STAGE_ALLOWED_KEYS, stage_key)
+            allowed_stage_keys = _WAN_HIGH_ALLOWED_KEYS if stage_key == "wan_high" else _WAN_LOW_ALLOWED_KEYS
+            _reject_unknown_keys(raw, allowed_stage_keys, stage_key)
             if isinstance(raw.get("model_dir"), str) and str(raw.get("model_dir")).strip():
                 raise HTTPException(status_code=400, detail=f"'{stage_key}.model_dir' is unsupported; use '{stage_key}.model_sha'")
             sha = _require_sha256_field(raw, "model_sha")
@@ -5224,30 +5230,35 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             out: dict[str, object] = dict(raw)
             out.pop("model_sha", None)
             out["model_dir"] = model_path
-            raw_stage_prompt = out.get("prompt")
-            if not isinstance(raw_stage_prompt, str):
-                raise HTTPException(status_code=400, detail=f"'{stage_key}.prompt' is required and must be a string")
-            stage_prompt = str(raw_stage_prompt).strip()
-            if not stage_prompt:
-                raise HTTPException(status_code=400, detail=f"'{stage_key}.prompt' must be a non-empty string")
-            raw_stage_negative_prompt = out.get("negative_prompt")
-            if raw_stage_negative_prompt is not None and not isinstance(raw_stage_negative_prompt, str):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"'{stage_key}.negative_prompt' must be a string when provided",
+            if stage_key == "wan_high":
+                stage_prompt = str(prompt or "").strip()
+                stage_negative_prompt = str(negative_prompt or "").strip()
+            else:
+                raw_stage_prompt = out.get("prompt")
+                if not isinstance(raw_stage_prompt, str):
+                    raise HTTPException(status_code=400, detail=f"'{stage_key}.prompt' is required and must be a string")
+                stage_prompt = str(raw_stage_prompt).strip()
+                if not stage_prompt:
+                    raise HTTPException(status_code=400, detail=f"'{stage_key}.prompt' must be a non-empty string")
+                raw_stage_negative_prompt = out.get("negative_prompt")
+                if raw_stage_negative_prompt is not None and not isinstance(raw_stage_negative_prompt, str):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"'{stage_key}.negative_prompt' must be a string when provided",
+                    )
+                stage_negative_prompt = (
+                    str(raw_stage_negative_prompt).strip()
+                    if isinstance(raw_stage_negative_prompt, str)
+                    else None
                 )
-            stage_negative_prompt = (
-                str(raw_stage_negative_prompt).strip()
-                if isinstance(raw_stage_negative_prompt, str)
-                else None
-            )
             stage_prompt, stage_negative_prompt, prompt_stage_loras = _parse_wan_stage_prompt_loras(
                 stage_key=stage_key,
                 prompt=stage_prompt,
                 negative_prompt=stage_negative_prompt,
             )
-            out["prompt"] = stage_prompt
-            out["negative_prompt"] = stage_negative_prompt
+            if stage_key != "wan_high":
+                out["prompt"] = stage_prompt
+                out["negative_prompt"] = stage_negative_prompt
             raw_stage_sampler = out.get("sampler")
             if raw_stage_sampler is not None:
                 if not isinstance(raw_stage_sampler, str):
@@ -5284,7 +5295,10 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 stage_key=stage_key,
                 resolve_asset_by_sha_fn=resolve_asset_by_sha,
             )
-            out["loras"] = _merge_wan_stage_loras(prompt_stage_loras, explicit_stage_loras)
+            if stage_key == "wan_high":
+                out["loras"] = _merge_wan_stage_loras(high_prompt_stage_loras, explicit_stage_loras)
+            else:
+                out["loras"] = _merge_wan_stage_loras(prompt_stage_loras, explicit_stage_loras)
             return out
 
         extras["wan_high"] = _resolve_wan_stage("wan_high")
@@ -5388,10 +5402,10 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         wan_metadata_dir: str | None = None
         expected_unipc_solver_hint: str | None = None
         init_image_data = payload.get('img2vid_init_image')
-        if use_generic_video_route and (not isinstance(init_image_data, str) or not init_image_data.strip()):
+        if not isinstance(init_image_data, str) or not init_image_data.strip():
             raise HTTPException(
                 status_code=400,
-                detail="'img2vid_init_image' is required for engine 'ltx2'.",
+                detail="'img2vid_init_image' is required for img2vid requests.",
             )
         extras: Dict[str, Any] = {}
         model_ref: str | None = None
@@ -5443,7 +5457,14 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         seed_val = parsed.seed
         cfg_val = parsed.guidance_scale
 
-        init_image = media.decode_image(init_image_data) if init_image_data else None
+        try:
+            init_image = media.decode_image(init_image_data)
+        except Exception as exc:
+            _router_log.warning("img2vid init image validation failed: %s", exc)
+            raise HTTPException(
+                status_code=400,
+                detail=public_http_error_detail(exc, fallback="Invalid 'img2vid_init_image' payload"),
+            ) from None
 
         if "video_return_frames" in payload:
             raw_return_frames = payload.get("video_return_frames")
@@ -5474,18 +5495,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 status_code=400,
                 detail=public_http_error_detail(exc, fallback="Invalid video export options"),
             ) from exc
-        if video_options:
-            extras["video"] = {
-                "video_filename_prefix": payload.get("video_filename_prefix"),
-                "video_format": payload.get("video_format"),
-                "video_pix_fmt": payload.get("video_pix_fmt"),
-                "video_crf": payload.get("video_crf"),
-                "video_loop_count": payload.get("video_loop_count"),
-                "video_pingpong": payload.get("video_pingpong"),
-                "video_save_metadata": payload.get("video_save_metadata"),
-                "video_save_output": payload.get("video_save_output"),
-                "video_trim_to_audio": payload.get("video_trim_to_audio"),
-            }
         video_interpolation = _optional_video_interpolation_field(payload)
         if video_interpolation is not None:
             extras["video_interpolation"] = video_interpolation
@@ -5531,12 +5540,23 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         def _require_sha_field(key: str) -> str:
             return _require_sha256_field(payload, key)
 
+        high_prompt, high_negative_prompt, high_prompt_stage_loras = _parse_wan_stage_prompt_loras(
+            stage_key="wan_high",
+            prompt=str(prompt or "").strip(),
+            negative_prompt=str(negative_prompt or "").strip(),
+        )
+        if not high_prompt:
+            raise HTTPException(status_code=400, detail="'img2vid_prompt' resolved empty after WAN LoRA parsing")
+        prompt = high_prompt
+        negative_prompt = high_negative_prompt
+
         def _resolve_wan_stage(stage_key: str) -> dict[str, object]:
             raw = payload.get(stage_key)
             if not isinstance(raw, dict):
                 raise HTTPException(status_code=400, detail=f"'{stage_key}' is required and must be an object")
             _reject_legacy_wan_stage_lora_keys(stage_key=stage_key, stage_raw=raw)
-            _reject_unknown_keys(raw, _WAN_STAGE_ALLOWED_KEYS, stage_key)
+            allowed_stage_keys = _WAN_HIGH_ALLOWED_KEYS if stage_key == "wan_high" else _WAN_LOW_ALLOWED_KEYS
+            _reject_unknown_keys(raw, allowed_stage_keys, stage_key)
             if isinstance(raw.get("model_dir"), str) and str(raw.get("model_dir")).strip():
                 raise HTTPException(status_code=400, detail=f"'{stage_key}.model_dir' is unsupported; use '{stage_key}.model_sha'")
             sha = _require_sha256_field(raw, "model_sha")
@@ -5548,30 +5568,35 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             out: dict[str, object] = dict(raw)
             out.pop("model_sha", None)
             out["model_dir"] = model_path
-            raw_stage_prompt = out.get("prompt")
-            if not isinstance(raw_stage_prompt, str):
-                raise HTTPException(status_code=400, detail=f"'{stage_key}.prompt' is required and must be a string")
-            stage_prompt = str(raw_stage_prompt).strip()
-            if not stage_prompt:
-                raise HTTPException(status_code=400, detail=f"'{stage_key}.prompt' must be a non-empty string")
-            raw_stage_negative_prompt = out.get("negative_prompt")
-            if raw_stage_negative_prompt is not None and not isinstance(raw_stage_negative_prompt, str):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"'{stage_key}.negative_prompt' must be a string when provided",
+            if stage_key == "wan_high":
+                stage_prompt = str(prompt or "").strip()
+                stage_negative_prompt = str(negative_prompt or "").strip()
+            else:
+                raw_stage_prompt = out.get("prompt")
+                if not isinstance(raw_stage_prompt, str):
+                    raise HTTPException(status_code=400, detail=f"'{stage_key}.prompt' is required and must be a string")
+                stage_prompt = str(raw_stage_prompt).strip()
+                if not stage_prompt:
+                    raise HTTPException(status_code=400, detail=f"'{stage_key}.prompt' must be a non-empty string")
+                raw_stage_negative_prompt = out.get("negative_prompt")
+                if raw_stage_negative_prompt is not None and not isinstance(raw_stage_negative_prompt, str):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"'{stage_key}.negative_prompt' must be a string when provided",
+                    )
+                stage_negative_prompt = (
+                    str(raw_stage_negative_prompt).strip()
+                    if isinstance(raw_stage_negative_prompt, str)
+                    else None
                 )
-            stage_negative_prompt = (
-                str(raw_stage_negative_prompt).strip()
-                if isinstance(raw_stage_negative_prompt, str)
-                else None
-            )
             stage_prompt, stage_negative_prompt, prompt_stage_loras = _parse_wan_stage_prompt_loras(
                 stage_key=stage_key,
                 prompt=stage_prompt,
                 negative_prompt=stage_negative_prompt,
             )
-            out["prompt"] = stage_prompt
-            out["negative_prompt"] = stage_negative_prompt
+            if stage_key != "wan_high":
+                out["prompt"] = stage_prompt
+                out["negative_prompt"] = stage_negative_prompt
             raw_stage_sampler = out.get("sampler")
             if raw_stage_sampler is not None:
                 if not isinstance(raw_stage_sampler, str):
@@ -5608,7 +5633,10 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 stage_key=stage_key,
                 resolve_asset_by_sha_fn=resolve_asset_by_sha,
             )
-            out["loras"] = _merge_wan_stage_loras(prompt_stage_loras, explicit_stage_loras)
+            if stage_key == "wan_high":
+                out["loras"] = _merge_wan_stage_loras(high_prompt_stage_loras, explicit_stage_loras)
+            else:
+                out["loras"] = _merge_wan_stage_loras(prompt_stage_loras, explicit_stage_loras)
             return out
 
         extras["wan_high"] = _resolve_wan_stage("wan_high")
@@ -5859,15 +5887,11 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         return req, engine_key, model_ref
 
     def validate_pre_task_img2vid_payload(payload: Dict[str, Any]) -> None:
-        video_engine_key = _canonical_engine_key(payload.get("engine")) if payload.get("engine") is not None else ""
-        use_generic_video_route = not _is_legacy_or_wan_video_route_engine(video_engine_key)
-        if not use_generic_video_route:
-            return
         init_image_data = payload.get("img2vid_init_image")
         if not isinstance(init_image_data, str) or not init_image_data.strip():
             raise HTTPException(
                 status_code=400,
-                detail="'img2vid_init_image' is required for engine 'ltx2'.",
+                detail="'img2vid_init_image' is required for img2vid requests.",
             )
 
     def _resolve_vid2vid_input_path(raw: str, *, field: str) -> str:
@@ -6120,18 +6144,6 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 status_code=400,
                 detail=public_http_error_detail(exc, fallback="Invalid video export options"),
             ) from exc
-        if video_options:
-            extras["video"] = {
-                "video_filename_prefix": payload.get("video_filename_prefix"),
-                "video_format": payload.get("video_format"),
-                "video_pix_fmt": payload.get("video_pix_fmt"),
-                "video_crf": payload.get("video_crf"),
-                "video_loop_count": payload.get("video_loop_count"),
-                "video_pingpong": payload.get("video_pingpong"),
-                "video_save_metadata": payload.get("video_save_metadata"),
-                "video_save_output": payload.get("video_save_output"),
-                "video_trim_to_audio": payload.get("video_trim_to_audio"),
-            }
         video_interpolation = _optional_video_interpolation_field(payload)
         if video_interpolation is not None:
             extras["video_interpolation"] = video_interpolation
@@ -6612,6 +6624,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         _enforce_generation_settings_contract(payload)
         _validate_route_engine_capability(payload, route_mode=GenerationRouteMode.TXT2VID)
         _reject_legacy_wan_request_key_aliases(payload, context="txt2vid")
+        _validate_pre_task_txt2vid_payload(payload)
 
         device = _parse_explicit_device(payload, route_mode=GenerationRouteMode.TXT2VID)
         loop = asyncio.get_running_loop()
@@ -6652,13 +6665,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
     ) -> Dict[str, Any]:
         """Video-to-video endpoint.
 
-        Accepts multipart form-data:
-          - video: source video upload (optional when `payload.vid2vid_video_path` is used)
-          - mask_video: quadmask video upload (optional when `payload.vid2vid_mask_video_path` is used)
-          - payload: JSON string with the capability-driven `vid2vid_*` keys for `engine="netflix_void"`
-
-        Current-tranche public ownership is limited to the native `netflix_void` lane. Path-based inputs are still
-        restricted to the backend working directory.
+        The route is intentionally parked until a native vid2vid family lands end-to-end.
         """
         try:
             data = json.loads(payload) if payload else {}
@@ -6671,70 +6678,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         if not isinstance(data, dict):
             raise HTTPException(status_code=400, detail="payload must be JSON object")
 
-        _enforce_generation_settings_contract(data)
-        _validate_route_engine_capability(data, route_mode=GenerationRouteMode.VID2VID)
-        _reject_legacy_wan_request_key_aliases(data, context="vid2vid")
-
-        engine_key = _canonical_engine_key(data.get("engine")) if data.get("engine") is not None else ""
-        if engine_key != "netflix_void":
-            raise HTTPException(
-                status_code=501,
-                detail="The current capability-driven `/api/vid2vid` cutover only supports engine 'netflix_void'.",
-            )
-
-        blocked_uploads = {
-            "reference_image": reference_image,
-            "pose_video": pose_video,
-            "face_video": face_video,
-            "background_video": background_video,
-        }
-        unexpected_uploads = sorted(
-            field_name
-            for field_name, upload in blocked_uploads.items()
-            if upload is not None
-        )
-        if unexpected_uploads:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Engine 'netflix_void' does not support these multipart field(s): "
-                    f"{', '.join(unexpected_uploads)}."
-                ),
-            )
-
-        request_token = uuid4().hex
-        uploaded_paths: list[str] = []
-        try:
-            if video is not None:
-                if str(data.get("vid2vid_video_path") or "").strip():
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Provide only one source video input: multipart 'video' or 'vid2vid_video_path'.",
-                    )
-                staged_video_path = await _stage_vid2vid_upload(upload=video, field_name="video", token=request_token)
-                data["vid2vid_video_path"] = staged_video_path
-                uploaded_paths.append(staged_video_path)
-            if mask_video is not None:
-                if str(data.get("vid2vid_mask_video_path") or "").strip():
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Provide only one quadmask input: multipart 'mask_video' or 'vid2vid_mask_video_path'.",
-                    )
-                staged_mask_path = await _stage_vid2vid_upload(upload=mask_video, field_name="mask_video", token=request_token)
-                data["vid2vid_mask_video_path"] = staged_mask_path
-                uploaded_paths.append(staged_mask_path)
-            if uploaded_paths:
-                data["__vid2vid_uploaded_paths"] = list(uploaded_paths)
-
-            device = _parse_explicit_device(data, route_mode=GenerationRouteMode.VID2VID)
-            loop = asyncio.get_running_loop()
-            entry = TaskEntry(loop)
-            task_id = f"task(api-vid2vid-{request_token})"
-            register_task(task_id, entry)
-            run_video_task(task_id, data, entry, TaskType.VID2VID, device=device)
-            return {"task_id": task_id}
-        except Exception:
-            _cleanup_staged_vid2vid_uploads(uploaded_paths)
-            raise
+        del reference_image, pose_video, face_video, background_video, video, mask_video
+        raise HTTPException(status_code=400, detail=_PARKED_VID2VID_ROUTE_DETAIL)
 
     return router

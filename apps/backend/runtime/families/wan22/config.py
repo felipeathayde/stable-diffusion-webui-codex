@@ -495,9 +495,7 @@ def build_wan22_gguf_run_config(
 
     hi_steps_override = None
     if isinstance(wh_raw, dict) and wh_raw.get("steps") is not None:
-        hi_steps_override = _coerce_int(wh_raw.get("steps"))
-        if hi_steps_override is None:
-            raise RuntimeError(f"WAN22 GGUF: wan_high.steps must be an int, got: {wh_raw.get('steps')!r}")
+        raise RuntimeError("WAN22 GGUF: wan_high.steps is unsupported; use request.steps.")
     lo_steps_override = None
     if isinstance(wl_raw, dict) and wl_raw.get("steps") is not None:
         lo_steps_override = _coerce_int(wl_raw.get("steps"))
@@ -627,55 +625,74 @@ def build_wan22_gguf_run_config(
         if not os.path.isfile(model_dir):
             raise RuntimeError(f"WAN22 GGUF: {stage} model not found: {model_dir}")
 
-        raw_prompt = raw.get("prompt")
-        if raw_prompt is None:
-            stage_prompt = None
-        elif isinstance(raw_prompt, str):
-            stage_prompt = raw_prompt.strip() or None
+        if stage == "wan_high":
+            for removed_key in ("prompt", "negative_prompt", "steps", "cfg_scale", "sampler", "scheduler", "seed"):
+                if raw.get(removed_key) is not None:
+                    raise RuntimeError(
+                        f"WAN22 GGUF: {stage}.{removed_key} is unsupported; use the top-level request owner."
+                    )
+            stage_prompt = str(getattr(request, "prompt", None) or "").strip() or None
+            if stage_prompt is None:
+                raise RuntimeError("WAN22 GGUF: request.prompt must be a non-empty string for wan_high.")
+            stage_negative_prompt = str(getattr(request, "negative_prompt", None) or "").strip()
         else:
-            raise RuntimeError(f"WAN22 GGUF: {stage}.prompt must be a string, got: {raw_prompt!r}")
+            raw_prompt = raw.get("prompt")
+            if raw_prompt is None:
+                stage_prompt = None
+            elif isinstance(raw_prompt, str):
+                stage_prompt = raw_prompt.strip() or None
+            else:
+                raise RuntimeError(f"WAN22 GGUF: {stage}.prompt must be a string, got: {raw_prompt!r}")
 
-        raw_negative_prompt = raw.get("negative_prompt")
-        if raw_negative_prompt is None:
-            stage_negative_prompt = None
-        elif isinstance(raw_negative_prompt, str):
-            stage_negative_prompt = raw_negative_prompt.strip()
-        else:
-            raise RuntimeError(
-                f"WAN22 GGUF: {stage}.negative_prompt must be a string, got: {raw_negative_prompt!r}"
-            )
+            raw_negative_prompt = raw.get("negative_prompt")
+            if raw_negative_prompt is None:
+                stage_negative_prompt = None
+            elif isinstance(raw_negative_prompt, str):
+                stage_negative_prompt = raw_negative_prompt.strip()
+            else:
+                raise RuntimeError(
+                    f"WAN22 GGUF: {stage}.negative_prompt must be a string, got: {raw_negative_prompt!r}"
+                )
 
-        raw_steps = raw.get("steps")
-        steps = _coerce_int(raw_steps)
-        if raw_steps is not None and steps is None:
-            raise RuntimeError(f"WAN22 GGUF: {stage}.steps must be an int, got: {raw_steps!r}")
-        steps = int(steps) if steps is not None else int(default_steps)
-        if int(steps) < 1:
-            raise RuntimeError(f"WAN22 GGUF: {stage}.steps must be >= 1, got: {steps}")
-
-        raw_cfg_scale = raw.get("cfg_scale")
-        if raw_cfg_scale is None:
+        if stage == "wan_high":
+            steps = int(default_steps)
+            if int(steps) < 1:
+                raise RuntimeError(f"WAN22 GGUF: {stage}.steps must be >= 1, got: {steps}")
             cfg_scale = default_cfg
-        else:
-            cfg_scale = _coerce_float(raw_cfg_scale)
-            if cfg_scale is None:
-                raise RuntimeError(f"WAN22 GGUF: {stage}.cfg_scale must be a float, got: {raw_cfg_scale!r}")
-
-        raw_sampler = raw.get("sampler")
-        if raw_sampler is None:
             sampler = None
-        else:
-            sampler = _normalize_wan22_sampler_value(
-                field_name=f"{stage}.sampler",
-                value=raw_sampler,
-                expected_unipc_solver_hint=metadata_unipc_solver_hint,
-            )
-
-        raw_scheduler = raw.get("scheduler")
-        if raw_scheduler is None:
             scheduler = None
         else:
-            scheduler = _normalize_wan22_scheduler_value(field_name=f"{stage}.scheduler", value=raw_scheduler)
+            raw_steps = raw.get("steps")
+            steps = _coerce_int(raw_steps)
+            if raw_steps is not None and steps is None:
+                raise RuntimeError(f"WAN22 GGUF: {stage}.steps must be an int, got: {raw_steps!r}")
+            steps = int(steps) if steps is not None else int(default_steps)
+            if int(steps) < 1:
+                raise RuntimeError(f"WAN22 GGUF: {stage}.steps must be >= 1, got: {steps}")
+
+            raw_cfg_scale = raw.get("cfg_scale")
+            if raw_cfg_scale is None:
+                cfg_scale = default_cfg
+            else:
+                cfg_scale = _coerce_float(raw_cfg_scale)
+                if cfg_scale is None:
+                    raise RuntimeError(f"WAN22 GGUF: {stage}.cfg_scale must be a float, got: {raw_cfg_scale!r}")
+
+            raw_sampler = raw.get("sampler")
+            if raw_sampler is None:
+                sampler = None
+            else:
+                sampler = _normalize_wan22_sampler_value(
+                    field_name=f"{stage}.sampler",
+                    value=raw_sampler,
+                    expected_unipc_solver_hint=metadata_unipc_solver_hint,
+                )
+
+            raw_scheduler = raw.get("scheduler")
+            if raw_scheduler is None:
+                scheduler = None
+            else:
+                scheduler = _normalize_wan22_scheduler_value(field_name=f"{stage}.scheduler", value=raw_scheduler)
 
         raw_flow_shift = raw.get("flow_shift")
         if raw_flow_shift is None:
@@ -685,13 +702,16 @@ def build_wan22_gguf_run_config(
             if flow_shift is None:
                 raise RuntimeError(f"WAN22 GGUF: {stage}.flow_shift must be a float, got: {raw_flow_shift!r}")
 
-        raw_seed = raw.get("seed")
-        if raw_seed is None:
+        if stage == "wan_high":
             seed = None
         else:
-            seed = _coerce_int(raw_seed)
-            if seed is None:
-                raise RuntimeError(f"WAN22 GGUF: {stage}.seed must be an int, got: {raw_seed!r}")
+            raw_seed = raw.get("seed")
+            if raw_seed is None:
+                seed = None
+            else:
+                seed = _coerce_int(raw_seed)
+                if seed is None:
+                    raise RuntimeError(f"WAN22 GGUF: {stage}.seed must be an int, got: {raw_seed!r}")
 
         raw_loras = raw.get("loras")
         loras: list[tuple[str, float]] = []

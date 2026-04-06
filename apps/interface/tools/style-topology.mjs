@@ -34,7 +34,6 @@ export const STYLE_TOPOLOGY = Object.freeze([
   styleEntry('apps/interface/src/styles/components/refiner-settings-card.css', 'component'),
   styleEntry('apps/interface/src/styles/components/result-viewer.css', 'component'),
   styleEntry('apps/interface/src/styles/components/inpaint-mask-editor.css', 'component'),
-  styleEntry('apps/interface/src/styles/components/base-tab-header.css', 'component'),
   styleEntry('apps/interface/src/styles/components/prompt-fields.css', 'component'),
   styleEntry('apps/interface/src/styles/components/video-settings-card.css', 'component'),
   styleEntry('apps/interface/src/styles/components/video-generation-cards.css', 'component'),

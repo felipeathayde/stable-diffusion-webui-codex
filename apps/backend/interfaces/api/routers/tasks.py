@@ -208,6 +208,7 @@ def build_router(*, codex_root: Path, backend_state: Any) -> APIRouter:
             raise HTTPException(status_code=404, detail="Task not found")
         previous_cancel_requested = bool(entry.cancel_requested)
         previous_cancel_mode = entry.cancel_mode
+        task_has_started = entry.snapshot_running().get("started_at_ms") is not None and not entry.done.done()
 
         stop_generating = None
         if mode is TaskCancelMode.IMMEDIATE:
@@ -219,7 +220,7 @@ def build_router(*, codex_root: Path, backend_state: Any) -> APIRouter:
         if not ok:
             raise HTTPException(status_code=404, detail="Task not found")
 
-        if mode is TaskCancelMode.IMMEDIATE:
+        if mode is TaskCancelMode.IMMEDIATE and task_has_started:
             try:
                 stop_generating()
             except Exception:

@@ -82,7 +82,7 @@ def _maybe_dump_latents(
                 "height": int(getattr(processing, "height", 0) or 0),
                 "steps": int(plan.steps),
                 "guidance_scale": float(plan.guidance_scale),
-                "sampler": getattr(processing, "sampler_name", None) or plan.sampler_name,
+                "sampler": plan.sampler_name,
                 "scheduler": plan.scheduler_name,
                 "prompts": prompt_context.prompts,
                 "negative_prompts": prompt_context.negative_prompts,
@@ -90,7 +90,7 @@ def _maybe_dump_latents(
                 "subseeds": plan.subseeds,
             },
         }
-        effective_sampler_name = getattr(processing, "sampler_name", None) or plan.sampler_name
+        effective_sampler_name = plan.sampler_name
         if isinstance(effective_sampler_name, str) and effective_sampler_name.strip().lower() == "er sde":
             if plan.er_sde is None:
                 payload["metadata"]["er_sde"] = {

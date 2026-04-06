@@ -145,9 +145,7 @@ def configured_main_device() -> str:
 
     candidates: list[str | None] = [
         getattr(runtime_args.args, "codex_main_device", None),
-        getattr(runtime_args.args, "codex_core_device", None),
         os.getenv("CODEX_MAIN_DEVICE"),
-        os.getenv("CODEX_CORE_DEVICE"),
     ]
     for raw in candidates:
         normalized = str(raw or "").strip().lower()
@@ -168,19 +166,14 @@ def parse_device_from_payload(
     route_policy: RouteDevicePolicy | None = None,
 ) -> str:
     main = configured_main_device()
-    raw = (
-        payload.get("codex_device")
-        or payload.get("device")
-        or payload.get("codex_diffusion_device")
-        or ""
-    )
+    for legacy_key in ("codex_device", "codex_diffusion_device"):
+        if legacy_key in payload:
+            raise ValueError(f"Unsupported legacy device key: '{legacy_key}'. Use 'device'.")
+    raw = payload.get("device") or ""
     dev = str(raw).strip().lower()
     allowed = "|".join(sorted(_ALLOWED_DEVICES))
     if not dev:
-        raise ValueError(
-            "Missing 'device' selection (accepted keys: codex_device|device|codex_diffusion_device; "
-            f"allowed values: {allowed})"
-        )
+        raise ValueError(f"Missing 'device' selection (allowed values: {allowed})")
     if dev not in _ALLOWED_DEVICES:
         raise ValueError(f"Invalid device (allowed: {allowed})")
     if dev != main:

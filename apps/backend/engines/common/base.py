@@ -162,29 +162,13 @@ class LoadOptions:
         elif model_format_raw is not None and not isinstance(model_format_raw, str):
             raise TypeError("model_format must be a non-empty string when provided.")
 
-        explicit_streaming: bool | None = None
-        legacy_streaming: bool | None = None
         if "core_streaming_enabled" in working:
             explicit_streaming_raw = working.pop("core_streaming_enabled")
             if not isinstance(explicit_streaming_raw, bool):
                 raise TypeError("core_streaming_enabled must be a boolean when provided.")
-            explicit_streaming = explicit_streaming_raw
-        if "codex_core_streaming" in working:
-            legacy_streaming_raw = working.pop("codex_core_streaming")
-            if not isinstance(legacy_streaming_raw, bool):
-                raise TypeError("codex_core_streaming must be a boolean when provided.")
-            legacy_streaming = legacy_streaming_raw
-        if (
-            explicit_streaming is not None
-            and legacy_streaming is not None
-            and explicit_streaming != legacy_streaming
-        ):
-            raise RuntimeError(
-                "Conflicting streaming flags: core_streaming_enabled and codex_core_streaming must match."
-            )
-        core_streaming_enabled = (
-            explicit_streaming if explicit_streaming is not None else legacy_streaming
-        )
+            core_streaming_enabled: bool | None = explicit_streaming_raw
+        else:
+            core_streaming_enabled = None
 
         return cls(
             tenc_source=tenc_source,

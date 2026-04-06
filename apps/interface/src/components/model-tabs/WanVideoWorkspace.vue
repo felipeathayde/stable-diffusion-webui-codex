@@ -6,12 +6,12 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Frozen source video workspace retained as reference during the baseline-owner cutover.
-This file preserves the copied source implementation unchanged in this tranche so `VideoModelTab.vue` can become the baseline owner while still being provably mechanical.
-Runtime/body logic here stays frozen; only truth-surface sync is allowed in the cutover tranche.
+Purpose: Reference-only WAN source video workspace retained during the baseline-owner cutover.
+This file preserves the copied WAN source implementation so `VideoModelTab.vue` can stay the sole live owner while still being provably mechanical.
+Runtime/body logic here is not a live owner surface; only maintenance-only compatibility/truth sync is allowed while the reference remains in-tree.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `WanVideoWorkspace` (component): Frozen source video workspace retained as reference during the cutover.
+- `WanVideoWorkspace` (component): Reference-only WAN source video workspace retained during the cutover.
 - `GuidedStep` (type): Guided-generation step definition (message + CSS selector to highlight/focus).
 - `AspectMode` (type): Aspect ratio mode presets for width/height controls.
 - `defaultStage` (function): Returns default WAN stage params (high/low) for new tabs/resets.
@@ -2410,14 +2410,14 @@ async function sendToWorkflows(): Promise<void> {
   if (!tab.value) return
   workflowBusy.value = true
   try {
-    await workflows.createSnapshot({
+    const result = await workflows.saveSnapshot({
       name: `${tab.value.title} — ${new Date().toLocaleString()}`,
       source_tab_id: tab.value.id,
       type: tab.value.type,
       engine_semantics: tab.value.type === 'wan' ? 'wan22' : tab.value.type,
       params_snapshot: tab.value.params as Record<string, unknown>,
     })
-    toast('Snapshot saved to Workflows.')
+    toast(result.action === 'updated' ? 'Snapshot updated in Workflows.' : 'Snapshot saved to Workflows.')
   } catch (e) {
     toast(e instanceof Error ? e.message : String(e))
   } finally {

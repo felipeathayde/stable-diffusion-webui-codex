@@ -6,7 +6,7 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Semantic engine capability surfaces exposed to the UI layer.
+Purpose: Semantic engine capability surfaces exposed to the UI layer, plus explicit parked exact-engine stubs.
 Defines `SemanticEngine` tags and an `EngineParamSurface` describing which high-level UI sections and tasks are expected to be used for each engine,
 including explicit masked-img2img/inpaint support, vid2vid discoverability, and native IP-Adapter/SUPIR discoverability, with executable defaults and
 recommendation hints for the live surface (for example SD15 `ddim`/`ddim`, WAN22 `uni-pc bh2`/`simple`, and LTX2 `euler`/`simple` with no sampler fiction
@@ -20,8 +20,10 @@ Symbols (top-level; keep in sync; no ghosts):
 - `SemanticEngine` (enum): UI-facing semantic engine tags used by API/frontend gating.
 - `GuidanceAdvancedSurface` (dataclass): Optional per-engine support map for advanced CFG/APG controls (`extras.guidance` keys).
 - `EngineParamSurface` (dataclass): Declared parameter surface for an engine (workflow flags including masked img2img/inpaint, vid2vid, IP-Adapter/SUPIR support, and optional sampler/scheduler recommendations).
+- `ParkedExactEngineStub` (dataclass): Public placeholder contract for exact engine ids that are intentionally parked/not implemented.
 - `ENGINE_SURFACES` (constant): Mapping of semantic engine tag to `EngineParamSurface`.
 - `ENGINE_ID_TO_SEMANTIC_ENGINE` (constant): Canonical mapping from API engine ids to semantic engine tags.
+- `PARKED_EXACT_ENGINES` (constant): Mapping of exact engine ids that remain public only as parked placeholders.
 - `ip_adapter_support_error` (function): Return the fail-loud exact-engine/semantic-engine support error for IP-Adapter, or `None` when supported.
 - `supports_ip_adapter_engine_id` (function): Return whether the exact engine id is allowed to run IP-Adapter in tranche 1.
 - `supir_support_error` (function): Return the fail-loud exact-engine/semantic-engine support error for SUPIR mode, or `None` when supported.
@@ -32,6 +34,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `engine_supports_cfg` (function): Return whether the engine family supports classic CFG (`cfg`) via family capabilities.
 - `serialize_engine_capabilities` (function): Returns engine capability surfaces as JSON-serializable dicts.
 - `serialize_family_capabilities` (function): Returns model family capability surfaces as JSON-serializable dicts.
+- `serialize_parked_exact_engines` (function): Returns parked exact-engine stubs as JSON-serializable dicts.
 """
 
 from __future__ import annotations
@@ -116,6 +119,14 @@ class EngineParamSurface:
     guidance_advanced: GuidanceAdvancedSurface | None = None
     # Optional: nested LTX-only execution-profile/default surface.
     ltx_execution_surface: Ltx2ExecutionSurface | None = None
+
+
+@dataclass(frozen=True)
+class ParkedExactEngineStub:
+    """Public placeholder contract for an exact engine id that is intentionally parked."""
+
+    status: str
+    detail: str
 
 
 def build_ltx2_capability_surface() -> EngineParamSurface:
@@ -229,7 +240,7 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
     SemanticEngine.ZIMAGE: EngineParamSurface(
         supports_txt2img=True,
         supports_img2img=True,
-        supports_img2img_masking=False,
+        supports_img2img_masking=True,
         supports_txt2vid=False,
         supports_img2vid=False,
         supports_hires=True,
@@ -301,53 +312,6 @@ ENGINE_SURFACES: Dict[SemanticEngine, EngineParamSurface] = {
     ),
     # LTX2 distilled/core-only video workflows (txt2vid/img2vid).
     SemanticEngine.LTX2: build_ltx2_capability_surface(),
-    # Netflix VOID: capability-driven native vid2vid public lane.
-    SemanticEngine.NETFLIX_VOID: EngineParamSurface(
-        supports_txt2img=False,
-        supports_img2img=False,
-        supports_img2img_masking=False,
-        supports_txt2vid=False,
-        supports_img2vid=False,
-        supports_hires=False,
-        supports_refiner=False,
-        supports_lora=False,
-        supports_controlnet=False,
-        supports_ip_adapter=False,
-        supports_supir_mode=False,
-        supports_vid2vid=True,
-        default_sampler=None,
-        default_scheduler=None,
-    ),
-    # Hunyuan Video: video-only workflows.
-    SemanticEngine.HUNYUAN_VIDEO: EngineParamSurface(
-        supports_txt2img=False,
-        supports_img2img=False,
-        supports_img2img_masking=False,
-        supports_txt2vid=True,
-        supports_img2vid=True,
-        supports_hires=False,
-        supports_refiner=False,
-        supports_lora=False,
-        supports_controlnet=False,
-        supports_ip_adapter=False,
-        supports_supir_mode=False,
-        default_sampler=None,
-        default_scheduler=None,
-    ),
-    # SVD (Stable Video Diffusion): image-to-video only today.
-    SemanticEngine.SVD: EngineParamSurface(
-        supports_txt2img=False,
-        supports_img2img=False,
-        supports_img2img_masking=False,
-        supports_txt2vid=False,
-        supports_img2vid=True,
-        supports_hires=False,
-        supports_refiner=False,
-        supports_lora=False,
-        supports_controlnet=False,
-        supports_ip_adapter=False,
-        supports_supir_mode=False,
-    ),
 }
 
 ENGINE_ID_TO_SEMANTIC_ENGINE: Dict[str, SemanticEngine] = {
@@ -355,7 +319,6 @@ ENGINE_ID_TO_SEMANTIC_ENGINE: Dict[str, SemanticEngine] = {
     "sd20": SemanticEngine.SD15,
     "sdxl": SemanticEngine.SDXL,
     "sdxl_refiner": SemanticEngine.SDXL,
-    "sd35": SemanticEngine.SDXL,
     "flux1": SemanticEngine.FLUX,
     "flux1_kontext": SemanticEngine.FLUX,
     "flux1_fill": SemanticEngine.FLUX,
@@ -367,9 +330,25 @@ ENGINE_ID_TO_SEMANTIC_ENGINE: Dict[str, SemanticEngine] = {
     "wan22_14b": SemanticEngine.WAN22,
     "wan22_14b_animate": SemanticEngine.WAN22,
     "ltx2": SemanticEngine.LTX2,
-    "netflix_void": SemanticEngine.NETFLIX_VOID,
-    "svd": SemanticEngine.SVD,
-    "hunyuan_video": SemanticEngine.HUNYUAN_VIDEO,
+}
+
+PARKED_EXACT_ENGINES: Dict[str, ParkedExactEngineStub] = {
+    "sd35": ParkedExactEngineStub(
+        status="not_implemented",
+        detail="Engine 'sd35' is parked until SD3.5 conditioning/keymap support is implemented.",
+    ),
+    "netflix_void": ParkedExactEngineStub(
+        status="not_implemented",
+        detail="Engine 'netflix_void' is parked until the native vid2vid runtime is implemented.",
+    ),
+    "svd": ParkedExactEngineStub(
+        status="not_implemented",
+        detail="Engine 'svd' is parked; the Stable Video Diffusion runtime is not implemented yet.",
+    ),
+    "hunyuan_video": ParkedExactEngineStub(
+        status="not_implemented",
+        detail="Engine 'hunyuan_video' is parked; the Hunyuan Video runtime is not implemented yet.",
+    ),
 }
 
 _IP_ADAPTER_EXACT_ENGINE_REJECTS: Dict[str, str] = {
@@ -507,12 +486,20 @@ def serialize_family_capabilities() -> Dict[str, Dict[str, object]]:
     return result
 
 
+def serialize_parked_exact_engines() -> Dict[str, Dict[str, str]]:
+    """Return parked exact-engine stubs as JSON-serializable dicts."""
+
+    return {engine_id: asdict(stub) for engine_id, stub in PARKED_EXACT_ENGINES.items()}
+
+
 __all__ = [
     "SemanticEngine",
     "GuidanceAdvancedSurface",
     "EngineParamSurface",
+    "ParkedExactEngineStub",
     "ENGINE_SURFACES",
     "ENGINE_ID_TO_SEMANTIC_ENGINE",
+    "PARKED_EXACT_ENGINES",
     "ip_adapter_support_error",
     "supports_ip_adapter_engine_id",
     "supir_support_error",
@@ -523,4 +510,5 @@ __all__ = [
     "engine_supports_cfg",
     "serialize_engine_capabilities",
     "serialize_family_capabilities",
+    "serialize_parked_exact_engines",
 ]

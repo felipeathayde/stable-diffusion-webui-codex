@@ -113,7 +113,6 @@ class ExtrasKeys:
         "text_encoder_override",
         "batch_size",
         "batch_count",
-        "randn_source",
         "eta_noise_seed_delta",
         "zimage_variant",
         "er_sde",

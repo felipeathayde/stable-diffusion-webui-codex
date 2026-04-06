@@ -15,7 +15,6 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_which` (function): Resolves ffmpeg executable paths via shared resolver precedence (env override → deterministic runtime path → downloader/PATH).
 - `_output_root` (function): Resolves the repo-local output root (`CODEX_ROOT/output`).
 - `_sanitize_filename_prefix` (function): Sanitizes a user/task-provided filename prefix for safe output paths.
-- `_normalize_video_options` (function): Normalizes legacy `video_*` option keys into exporter option keys.
 - `resolve_video_export_container` (function): Maps a format token to an output container + codec kind.
 - `_audio_codec_for` (function): Chooses an audio codec for a given output container.
 - `VideoExportResult` (dataclass): Export result container (saved flag + path/rel_path/mime + metadata).
@@ -71,26 +70,6 @@ def _sanitize_filename_prefix(prefix: str) -> str:
     return cleaned
 
 
-def _normalize_video_options(options: Mapping[str, Any] | None) -> dict[str, Any]:
-    raw: dict[str, Any] = dict(options or {})
-    # Accept legacy API keys (video_*); normalize to VideoExportOptions-style keys.
-    aliases = {
-        "video_filename_prefix": "filename_prefix",
-        "video_format": "format",
-        "video_pix_fmt": "pix_fmt",
-        "video_crf": "crf",
-        "video_loop_count": "loop_count",
-        "video_pingpong": "pingpong",
-        "video_save_metadata": "save_metadata",
-        "video_save_output": "save_output",
-        "video_trim_to_audio": "trim_to_audio",
-    }
-    for src, dst in aliases.items():
-        if src in raw and dst not in raw:
-            raw[dst] = raw.get(src)
-    return raw
-
-
 def resolve_video_export_container(fmt: str) -> tuple[str, str]:
     v = (fmt or "").strip().lower()
     if v in {"video/h264-mp4", "h264", "mp4", "video/mp4"}:
@@ -135,7 +114,7 @@ def export_video(
     audio_source_path: str | None = None,
     extra_metadata: Mapping[str, Any] | None = None,
 ) -> VideoExportResult | None:
-    opts = _normalize_video_options(options)
+    opts = dict(options or {})
     try:
         save_output = parse_bool_value(opts.get("save_output"), field="video_options.save_output", default=False)
     except RuntimeError as exc:

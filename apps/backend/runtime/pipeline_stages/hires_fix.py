@@ -474,8 +474,8 @@ def prepare_hires_latents_and_conditioning(
             target_height=int(resize_plan.target_height),
             upscaler_id=str(upscaler_id),
             tile=tile,
-            image_mask=getattr(processing, "image_mask", None),
-            round_mask=bool(getattr(processing, "round_image_mask", True)),
+            image_mask=getattr(processing, "mask", None),
+            round_mask=bool(getattr(processing, "mask_round", True)),
             progress_callback=progress_callback,
             resize_plan=resize_plan,
         )

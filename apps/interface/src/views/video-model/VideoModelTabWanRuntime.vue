@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Renderless WAN runtime helper for the canonical video tab view.
 Mounts the existing WAN tab runtime under a view-local seam and exposes reactive slot props to `VideoModelTab.vue`,
-while keeping the route-owned video view as the only live body/layout owner.
+while keeping the route-owned video view as the only live body/layout owner and routing shared Results/history actions through the current
+workflow save-or-update owner seam.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `VideoModelTabWanRuntime` (component): Renderless WAN runtime helper for `VideoModelTab.vue`.
@@ -17,6 +18,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `setHighPromptText` / `setHighNegativeText` / `setLowPromptText` / `setLowNegativeText` (functions): Prompt-field bridge setters exposed to the parent slot.
 - `setShowHighPromptLoraModal` / `setShowLowPromptLoraModal` (functions): Parent-facing modal visibility bridge setters.
 - `setVideoZoomOpen` / `setHistoryDetailsOpen` (functions): Parent-facing modal/overlay visibility bridge setters.
+- `sendToWorkflows` / `copyCurrentParams` / `applySelectedHistory` (functions): Parent-facing Results/history actions, including truthful save-vs-update Workflow notices.
 - `setGuidedTooltipEl` (function): Parent-facing tooltip element ref bridge.
 - `slotProps` (const): Reactive slot-prop bundle exposed to `VideoModelTab.vue`.
 -->
@@ -1792,14 +1794,14 @@ async function sendToWorkflows(): Promise<void> {
   if (!tab.value) return
   workflowBusy.value = true
   try {
-    await workflows.createSnapshot({
+    const result = await workflows.saveSnapshot({
       name: `${tab.value.title} — ${new Date().toLocaleString()}`,
       source_tab_id: tab.value.id,
       type: tab.value.type,
       engine_semantics: tab.value.type === 'wan' ? 'wan22' : tab.value.type,
       params_snapshot: tab.value.params as Record<string, unknown>,
     })
-    toast('Snapshot saved to Workflows.')
+    toast(result.action === 'updated' ? 'Snapshot updated in Workflows.' : 'Snapshot saved to Workflows.')
   } catch (e) {
     toast(e instanceof Error ? e.message : String(e))
   } finally {

@@ -9,7 +9,7 @@ Required Notice: see NOTICE
 Purpose: QuickSettings global store (models/options + asset SHA selection).
 Loads lists from `/api/*`, persists option changes via `/api/options`, and maintains cached inventory-driven choice lists plus SHA maps for VAEs/text encoders/WAN GGUF
 so UI selections resolve to backend SHA-based assets (no raw-path inputs). It also caches IP-Adapter model/image-encoder option lists from the canonical inventory snapshot,
-owns global component overrides (device + storage/compute dtype) applied via options, and caches the current `/api/options` revision for generation payload contracts
+owns the global runtime-device override plus component storage/compute dtype overrides applied via options, and caches the current `/api/options` revision for generation payload contracts
 (`settings_revision`).
 Text-encoder choices are sourced from inventory files constrained by `*_tenc` roots (not folder roots), and stale root-label overrides are
 sanitized so `tenc_sha` resolution remains deterministic across families (including Anima and LTX2). Inventory slot metadata is cached alongside
@@ -343,9 +343,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     { value: 'directml', label: 'DirectML' },
   ])
   const currentDevice = ref<string>('cuda')
-  const coreDevice = ref<string>('auto')
-  const teDevice = ref<string>('auto')
-  const vaeDevice = ref<string>('auto')
+  const mainDevice = ref<string>('auto')
   const dtypeChoices = ref<string[]>(['auto', 'fp16', 'bf16', 'fp32'])
   const coreDtype = ref<string>('auto')
   const coreComputeDtype = ref<string>('auto')
@@ -450,6 +448,14 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     }
   }
 
+  function clearDeviceStorage(): void {
+    try {
+      localStorage.removeItem(DEVICE_STORAGE_KEY)
+    } catch (err) {
+      console.warn('[quicksettings] failed to clear device from localStorage', err)
+    }
+  }
+
   function normalizeRuntimeDevice(raw: unknown): string | null {
     const normalized = String(raw || '').trim().toLowerCase()
     if (!normalized) return null
@@ -460,7 +466,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     return null
   }
 
-  function normalizeCoreDeviceSetting(raw: unknown): string {
+  function normalizeMainDeviceSetting(raw: unknown): string {
     const normalized = String(raw || '').trim().toLowerCase()
     if (normalized === 'auto') return 'auto'
     return normalizeRuntimeDevice(normalized) || 'auto'
@@ -691,20 +697,14 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
         [VAE_BY_FAMILY_OPTION_KEY]: serializeVaeByFamilyOption(vaeByFamily.value),
       })
     }
-    if (typeof (opts as any).codex_core_device === 'string') {
-      coreDevice.value = normalizeCoreDeviceSetting((opts as any).codex_core_device)
-      if (coreDevice.value === 'auto') {
+    if (typeof (opts as any).codex_main_device === 'string') {
+      mainDevice.value = normalizeMainDeviceSetting((opts as any).codex_main_device)
+      if (mainDevice.value === 'auto') {
         await syncCurrentDeviceFromBackendAuthority()
       } else {
-        currentDevice.value = coreDevice.value
-        saveDeviceToStorage(coreDevice.value)
+        currentDevice.value = mainDevice.value
+        saveDeviceToStorage(mainDevice.value)
       }
-    }
-    if (typeof (opts as any).codex_te_device === 'string') {
-      teDevice.value = (opts as any).codex_te_device
-    }
-    if (typeof (opts as any).codex_vae_device === 'string') {
-      vaeDevice.value = (opts as any).codex_vae_device
     }
     if (typeof (opts as any).codex_core_dtype === 'string') coreDtype.value = (opts as any).codex_core_dtype
     if (typeof (opts as any).codex_core_compute_dtype === 'string') coreComputeDtype.value = (opts as any).codex_core_compute_dtype
@@ -724,10 +724,6 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     if (typeof (opts as any).codex_core_streaming === 'boolean') {
       coreStreaming.value = (opts as any).codex_core_streaming
     }
-  }
-
-  async function setModel(title: string): Promise<void> {
-    currentModel.value = title
   }
 
   function hydrateInventoryChoiceCaches(
@@ -1153,43 +1149,36 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     return normalized
   }
 
-  async function setTextEncoders(labels: string[]): Promise<void> {
-    const normalized = normalizeTextEncoderSelectionLabels(labels)
-    currentTextEncoders.value = normalized
-    saveTextEncoderOverridesToStorage(normalized)
-  }
-
-  async function setDevice(value: string): Promise<void> {
-    const normalized = normalizeRuntimeDevice(value)
-    if (!normalized) {
-      throw new Error(`Unsupported device override '${String(value)}'.`)
+  async function setMainDevice(value: string): Promise<void> {
+    const normalizedValue = normalizeMainDeviceSetting(value)
+    const previousMainDevice = mainDevice.value
+    const previousCurrentDevice = currentDevice.value
+    const previousAppliedNowMessages = lastAppliedNowMessages.value.slice()
+    const previousRestartRequiredMessages = lastRestartRequiredMessages.value.slice()
+    mainDevice.value = normalizedValue
+    try {
+      await applyOptionUpdate({ codex_main_device: normalizedValue })
+      const mainDeviceRestartRequired = lastRestartRequiredMessages.value.some((message) =>
+        String(message || '').startsWith('codex_main_device:'),
+      )
+      if (normalizedValue === 'auto' || mainDeviceRestartRequired) {
+        await syncCurrentDeviceFromBackendAuthority()
+        return
+      }
+      currentDevice.value = normalizedValue
+      saveDeviceToStorage(normalizedValue)
+    } catch (error) {
+      mainDevice.value = previousMainDevice
+      currentDevice.value = previousCurrentDevice
+      lastAppliedNowMessages.value = previousAppliedNowMessages
+      lastRestartRequiredMessages.value = previousRestartRequiredMessages
+      if (previousCurrentDevice) {
+        saveDeviceToStorage(previousCurrentDevice)
+      } else {
+        clearDeviceStorage()
+      }
+      throw error
     }
-    await setCoreDevice(normalized)
-  }
-
-  async function setCoreDevice(value: string): Promise<void> {
-    const normalizedValue = normalizeCoreDeviceSetting(value)
-    coreDevice.value = normalizedValue
-    await applyOptionUpdate({ codex_core_device: normalizedValue })
-    const coreDeviceRestartRequired = lastRestartRequiredMessages.value.some((message) =>
-      String(message || '').startsWith('codex_core_device:'),
-    )
-    if (normalizedValue === 'auto' || coreDeviceRestartRequired) {
-      await syncCurrentDeviceFromBackendAuthority()
-      return
-    }
-    currentDevice.value = normalizedValue
-    saveDeviceToStorage(normalizedValue)
-  }
-
-  async function setTeDevice(value: string): Promise<void> {
-    teDevice.value = value
-    await applyOptionUpdate({ codex_te_device: value })
-  }
-
-  async function setVaeDevice(value: string): Promise<void> {
-    vaeDevice.value = value
-    await applyOptionUpdate({ codex_vae_device: value })
   }
 
   async function setCoreDtype(value: string): Promise<void> {
@@ -1257,16 +1246,11 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     init,
     invalidateModelsList,
     refreshModelsList,
-    setModel,
     setVae,
     setVaeForFamily,
     getVaeForFamily,
     getPersistedVaeForFamily,
-    setTextEncoders,
-    setDevice,
-    coreDevice,
-    teDevice,
-    vaeDevice,
+    mainDevice,
     coreDtype,
     coreComputeDtype,
     teDtype,
@@ -1274,9 +1258,7 @@ export const useQuicksettingsStore = defineStore('quicksettings', () => {
     vaeDtype,
     vaeComputeDtype,
     dtypeChoices,
-    setCoreDevice,
-    setTeDevice,
-    setVaeDevice,
+    setMainDevice,
     setCoreDtype,
     setCoreComputeDtype,
     setTeDtype,

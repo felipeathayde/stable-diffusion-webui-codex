@@ -10,10 +10,10 @@ Purpose: Unified video generation composable for WAN (txt2vid/img2vid).
 Owns per-tab video generation state (progress/frames/video result/history/queue), builds typed WAN payloads, starts tasks, and consumes task SSE events
 to update UI state and fetch final results. Every start payload includes `settings_revision`, and stale-revision conflicts (`409` + `current_revision`)
 trigger revision refresh + manual-retry UX. Persists a minimal resume marker to `localStorage` and auto-reattaches to in-flight tasks after reload
-via SSE replay (`after` / `lastEventId`) and snapshot refresh on `gap`. Uses stage-owned prompts (`high/low`) in validation/snapshots, deriving top-level
-mode prompt fields from the High stage in payload builders for backend compatibility. Includes compact output pass-through (`format`/`pixFmt`/`crf`/`loopCount`/
-`pingpong`/`returnFrames`), interpolation target FPS (`0` disables; payload computes backend interpolation factor from target/base FPS), stage `scheduler`, and stage `flowShift`
-pass-through in common WAN payload input. Also snapshots and forwards optional SeedVR2 upscaling controls as `video_upscaling`.
+via SSE replay (`after` / `lastEventId`) and snapshot refresh on `gap`. WAN payload ownership is explicit: top-level core owners (`prompt`, `negativePrompt`,
+`sampler`, `scheduler`, `steps`, `cfgScale`, `seed`) stay top-level in the typed builder input, while `wan_high` carries only model/Lora/flow overrides and
+`wan_low` keeps the live low-stage prompt/sampler fields. Includes compact output pass-through (`format`/`pixFmt`/`crf`/`loopCount`/`pingpong`/`returnFrames`),
+interpolation target FPS (`0` disables; payload computes backend interpolation factor from target/base FPS), and optional SeedVR2 upscaling controls as `video_upscaling`.
 Img2vid temporal payload fields are gated by `img2vidMode` (`solo|sliding|svi2|svi2_pro`), and WAN prompt `<lora:...>` tags are parsed client-side into
 stage-level LoRA arrays (`wan_high/wan_low.loras[]` with `sha+weight`) before payload dispatch. Start failures now log structured diagnostics to the browser console (status/detail/body/message + mode/tab)
 before surfacing UI error text.
@@ -692,16 +692,16 @@ export function useVideoGeneration(tabId: string) {
       height: v.height,
       fps: v.fps,
       frames: v.frames,
+      prompt: parsedHighStage.prompt,
+      negativePrompt: parsedHighStage.negativePrompt,
+      sampler: hi.sampler,
+      scheduler: hi.scheduler,
+      steps: hi.steps,
+      cfgScale: hi.cfgScale,
+      seed: hi.seed,
       attentionMode: v.attentionMode,
       high: {
         modelSha: hiSha,
-        prompt: parsedHighStage.prompt,
-        negativePrompt: parsedHighStage.negativePrompt,
-        sampler: hi.sampler,
-        scheduler: hi.scheduler,
-        steps: hi.steps,
-        cfgScale: hi.cfgScale,
-        seed: hi.seed,
         loras: mergedHighLoras,
         flowShift: hi.flowShift,
       },

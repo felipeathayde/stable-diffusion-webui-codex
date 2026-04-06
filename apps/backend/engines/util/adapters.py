@@ -495,8 +495,6 @@ def build_img2img_processing(req: Img2ImgRequest) -> CodexProcessingImg2Img:
         mask_blur_x=int(getattr(req, "mask_blur_x", getattr(req, "mask_blur", 4)) or 0),
         mask_blur_y=int(getattr(req, "mask_blur_y", getattr(req, "mask_blur", 4)) or 0),
         mask_round=mask_round,
-        round_image_mask=mask_round,
-        image_mask=req.mask,
         inpainting_fill=int(getattr(req, "inpainting_fill", 0) or 0),
         inpaint_full_res_padding=int(getattr(req, "inpaint_full_res_padding", 0) or 0),
         inpainting_mask_invert=int(getattr(req, "inpainting_mask_invert", 0) or 0),

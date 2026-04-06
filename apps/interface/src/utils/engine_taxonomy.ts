@@ -98,8 +98,6 @@ const ENGINE_ID_SET: ReadonlySet<string> = new Set<string>([
   'wan22',
   'wan22_14b',
   'wan22_5b',
-  'hunyuan_video',
-  'svd',
 ])
 
 const TAB_FAMILY_FALLBACK_SAMPLING: Readonly<Record<TabFamily, SamplingDefaults>> = Object.freeze({

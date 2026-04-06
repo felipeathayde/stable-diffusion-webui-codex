@@ -77,6 +77,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `deleteTabApi` (function): Deletes a tab (`DELETE /ui/tabs/:id`).
 - `fetchWorkflows` (function): Fetches workflows (`/ui/workflows`).
 - `createWorkflow` (function): Creates a workflow (`POST /ui/workflows`).
+- `updateWorkflow` (function): Updates workflow name/source-tab binding/params snapshot (`PATCH /ui/workflows/:id`).
 - `deleteWorkflow` (function): Deletes a workflow (`DELETE /ui/workflows/:id`).
 - `loadModelsForTab` (function): Loads models for a tab (`POST /models/load`).
 - `unloadModelsForTab` (function): Unloads models for a tab (`POST /models/unload`).
@@ -960,7 +961,14 @@ export function applyUiPreset(id: string, tab: string): Promise<UiPresetApplyRes
 }
 
 // Tabs/workflows persistence
-import type { TabsResponse, ApiTab, WorkflowsResponse } from './types'
+import type {
+  TabsResponse,
+  ApiTab,
+  WorkflowCreateResponse,
+  WorkflowDeleteResponse,
+  WorkflowUpdateResponse,
+  WorkflowsResponse,
+} from './types'
 
 export function fetchTabs(): Promise<TabsResponse> {
   return requestJsonCached<TabsResponse>('/ui/tabs')
@@ -990,12 +998,16 @@ export function fetchWorkflows(): Promise<WorkflowsResponse> {
   return requestJson<WorkflowsResponse>('/ui/workflows')
 }
 
-export function createWorkflow(payload: { name: string; source_tab_id: string; type: string; engine_semantics?: string; params_snapshot: Record<string, unknown> }): Promise<{ id: string }> {
-  return requestJson<{ id: string }>('/ui/workflows', { method: 'POST', body: JSON.stringify(payload) })
+export function createWorkflow(payload: { name: string; source_tab_id: string; type: string; engine_semantics?: string; params_snapshot: Record<string, unknown> }): Promise<WorkflowCreateResponse> {
+  return requestJson<WorkflowCreateResponse>('/ui/workflows', { method: 'POST', body: JSON.stringify(payload) })
 }
 
-export function deleteWorkflow(id: string): Promise<{ deleted: string }> {
-  return requestJson<{ deleted: string }>(`/ui/workflows/${encodeURIComponent(id)}`, { method: 'DELETE' })
+export function updateWorkflow(id: string, payload: { name?: string; source_tab_id?: string; params_snapshot?: Record<string, unknown> }): Promise<WorkflowUpdateResponse> {
+  return requestJson<WorkflowUpdateResponse>(`/ui/workflows/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(payload) })
+}
+
+export function deleteWorkflow(id: string): Promise<WorkflowDeleteResponse> {
+  return requestJson<WorkflowDeleteResponse>(`/ui/workflows/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
 export function loadModelsForTab(tabId: string): Promise<{ ok: boolean }> {

@@ -8,7 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Backend API-owned WAN video request-key contracts for strict route validation.
 Defines the shared top-level/stage allowlists consumed by generation routers for txt2vid/img2vid unknown-key rejection, keeps WAN stage payloads on the
-canonical `loras[]` contract (no legacy single-field stage LoRA keys), and exposes the legacy alias mapping used to fail loud on removed WAN request keys
+canonical `loras[]` contract (no legacy single-field stage LoRA keys), splits `wan_high` from `wan_low` so the public high-stage container no longer
+mirrors top-level request owners, and exposes the legacy alias mapping used to fail loud on removed WAN request keys
 before task dispatch.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -49,7 +50,15 @@ class WanVideoRequestKeys:
     VIDEO_INTERPOLATION: FrozenSet[str] = frozenset({"video_interpolation"})
     VIDEO_UPSCALING: FrozenSet[str] = frozenset({"video_upscaling"})
     WAN_STAGE_CONTAINERS: FrozenSet[str] = frozenset({"wan_high", "wan_low"})
-    WAN_STAGE_ALLOWED: FrozenSet[str] = frozenset(
+    WAN_HIGH_ALLOWED: FrozenSet[str] = frozenset(
+        {
+            "model_sha",
+            "model_dir",
+            "loras",
+            "flow_shift",
+        }
+    )
+    WAN_LOW_ALLOWED: FrozenSet[str] = frozenset(
         {
             "model_sha",
             "model_dir",
@@ -164,8 +173,6 @@ WAN_VIDEO_REQUEST_KEYS = WanVideoRequestKeys()
 
 WAN_VIDEO_LEGACY_REQUEST_KEY_EQUIVALENTS = MappingProxyType(
     {
-        "codex_device": "device",
-        "codex_diffusion_device": "device",
         "wan_tokenizer_dir": "wan_metadata_dir",
         "txt2vid_sampling": "txt2vid_sampler",
         "img2vid_sampling": "img2vid_sampler",

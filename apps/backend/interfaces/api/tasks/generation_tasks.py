@@ -364,15 +364,15 @@ def _format_parameters_infotext(info_obj: object) -> str:
     if steps is not None and steps >= 0:
         add_kv("Steps", steps)
 
-    sampler = _as_text(info.get("sampler_name", "") or info.get("sampler", ""))
+    sampler = _as_text(info.get("sampler", ""))
     if sampler:
         add_kv("Sampler", sampler)
 
-    scheduler = _as_text(info.get("schedule_type", "") or info.get("scheduler", ""))
+    scheduler = _as_text(info.get("scheduler", ""))
     if scheduler:
         add_kv("Schedule type", scheduler)
 
-    cfg_scale = _format_number(info.get("cfg_scale", info.get("guidance_scale")))
+    cfg_scale = _format_number(info.get("guidance_scale"))
     if cfg_scale is not None:
         add_kv("CFG scale", cfg_scale)
 
@@ -389,11 +389,11 @@ def _format_parameters_infotext(info_obj: object) -> str:
     if model_hash:
         add_kv("Model hash", model_hash)
 
-    model_name = _as_text(info.get("model", "") or info.get("sd_model_checkpoint", ""))
+    model_name = _as_text(info.get("model", ""))
     if model_name:
         add_kv("Model", model_name)
 
-    vae_name = _as_text(info.get("vae", "") or info.get("vae_name", ""))
+    vae_name = _as_text(info.get("vae", ""))
     if vae_name:
         add_kv("VAE", vae_name)
 
@@ -401,13 +401,11 @@ def _format_parameters_infotext(info_obj: object) -> str:
     if clip_skip is not None and clip_skip >= 0:
         add_kv("Clip skip", clip_skip)
 
-    denoise = _format_number(
-        info.get("denoising_strength", info.get("denoise_strength", info.get("denoiseStrength")))
-    )
+    denoise = _format_number(info.get("denoising_strength"))
     if denoise is not None:
         add_kv("Denoising strength", denoise)
 
-    rng = _as_text(info.get("rng", "") or info.get("rng_source", ""))
+    rng = _as_text(info.get("rng", ""))
     if rng:
         add_kv("RNG", rng)
 

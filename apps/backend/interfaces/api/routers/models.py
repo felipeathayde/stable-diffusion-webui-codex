@@ -718,7 +718,7 @@ def build_router(
         if record is None:
             raise HTTPException(status_code=404, detail="checkpoint not found")
 
-        raw_path = str(getattr(record, "filename", "") or getattr(record, "path", "") or "").strip()
+        raw_path = str(getattr(record, "filename", "") or "").strip()
         if not raw_path:
             raise HTTPException(status_code=500, detail="checkpoint record missing filename")
 
@@ -739,7 +739,7 @@ def build_router(
             raise HTTPException(status_code=500, detail=str(exc))
 
         size_bytes = int(resolved.stat().st_size)
-        short_hash = getattr(record, "short_hash", None) or getattr(record, "shorthash", None)
+        short_hash = getattr(record, "short_hash", None)
         return {
             "hash": short_hash,
             "file.name": resolved.stem,
@@ -856,6 +856,7 @@ def build_router(
                 ENGINE_ID_TO_SEMANTIC_ENGINE,
                 serialize_engine_capabilities,
                 serialize_family_capabilities,
+                serialize_parked_exact_engines,
             )
             from apps.backend.core.contracts.asset_requirements import (
                 contract_for_core_only,
@@ -891,6 +892,7 @@ def build_router(
                 "smart_cache": cache_stats,
                 "asset_contracts": asset_contracts,
                 "engine_id_to_semantic_engine": engine_id_to_semantic_engine,
+                "parked_exact_engines": serialize_parked_exact_engines(),
                 "dependency_checks": dependency_checks,
             }
         except Exception as exc:

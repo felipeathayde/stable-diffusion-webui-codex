@@ -11,9 +11,9 @@ Runs the selected video execution path (active WAN22 Diffusers/GGUF lanes plus t
 truthful LTX2 `executionProfile` stage flow (`distilled` and `one_stage` execute the one-stage native lane; `two_stage`
 runs `stage1_sampling -> latent_upsample -> stage2_refine -> decode`), applies shared SeedVR2
 upscaling/interpolation stages when requested, exports video, and yields progress/result events.
-WAN22 Diffusers stage execution requires explicit non-empty stage prompts in `extras.wan_high.prompt` and
-`extras.wan_low.prompt`; stage negatives preserve explicit empty values and only fall back to request negative when
-missing. Temporal routing requires explicit `extras.img2vid_mode` (`solo|sliding|svi2|svi2_pro`) and rejects implicit
+WAN22 Diffusers high-stage execution reads prompt/negative from the top-level request owner, while
+the second stage still uses explicit `extras.wan_low.prompt` / `extras.wan_low.negative_prompt`.
+Temporal routing requires explicit `extras.img2vid_mode` (`solo|sliding|svi2|svi2_pro`) and rejects implicit
 mode fallbacks; sliding defaults to fixed chunk seeding for temporal continuity while SVI modes default to incremented
 per-window seeding. The native LTX2 branch consumes a local `Ltx2RunResult` (`frames + AudioExportAsset + metadata`)
 and owns cleanup of generated temp audio after export.
@@ -1229,16 +1229,10 @@ def run_img2vid(
     extras = dict(plan.extras)
     wan_high_cfg = extras.get("wan_high")
     wan_hi_opts = WanStageOptions.from_mapping(wan_high_cfg) if isinstance(wan_high_cfg, dict) else None
-    if wan_hi_opts is None or wan_hi_opts.prompt is None:
-        raise RuntimeError("img2vid requires extras.wan_high.prompt to be set.")
-    high_prompt = str(wan_hi_opts.prompt).strip()
+    high_prompt = str(getattr(request, "prompt", None) or "").strip()
     if not high_prompt:
-        raise RuntimeError("img2vid requires a non-empty high-stage prompt.")
-    high_negative_prompt = (
-        str(wan_hi_opts.negative_prompt).strip()
-        if wan_hi_opts and wan_hi_opts.negative_prompt is not None
-        else str(getattr(request, "negative_prompt", "") or "").strip()
-    )
+        raise RuntimeError("img2vid requires a non-empty request.prompt.")
+    high_negative_prompt = str(getattr(request, "negative_prompt", "") or "").strip()
     if wan_hi_opts and wan_hi_opts.loras:
         apply_wan_stage_loras(
             pipe=active_pipe_hi,

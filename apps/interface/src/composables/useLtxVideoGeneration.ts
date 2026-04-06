@@ -303,7 +303,7 @@ export function useLtxVideoGeneration(tabId: string) {
   const mode = computed<LtxGenerationMode>(() => {
     const explicit = String(params.value?.mode || '').trim().toLowerCase()
     if (explicit === 'img2vid' || explicit === 'txt2vid') return explicit
-    return params.value?.useInitImage ? 'img2vid' : 'txt2vid'
+    return 'txt2vid'
   })
   const engineSurface = computed(() => engineCaps.get('ltx2'))
   const ltxExecutionSurface = computed(() => engineCaps.getLtxExecutionSurface('ltx2'))

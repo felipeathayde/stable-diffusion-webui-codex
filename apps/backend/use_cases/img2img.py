@@ -108,6 +108,7 @@ logger = get_backend_logger(__name__)
 _KONTEXT_MULTIPLE_OF = 16
 _CLASSIC_SD_IMG2IMG_ENGINES = {"sd15", "sd20", "sdxl", "sdxl_refiner", "sd35"}
 _CLASSIC_FLOW_IMG2IMG_ENGINES = {"flux1", "flux1_fill", "flux1_chroma", "zimage", "anima"}
+_CLASSIC_FLOW_MASKED_IMG2IMG_ENGINES = {"zimage"}
 
 # Recommended resolutions from upstream diffusers FluxKontextPipeline.
 _PREFERRED_KONTEXT_RESOLUTIONS: list[tuple[int, int]] = [
@@ -144,7 +145,7 @@ def _resolve_classic_img2img_backend(engine_id: str, *, has_mask: bool) -> str:
     if normalized_engine_id in _CLASSIC_SD_IMG2IMG_ENGINES:
         return "sd"
     if normalized_engine_id in _CLASSIC_FLOW_IMG2IMG_ENGINES:
-        if has_mask:
+        if has_mask and normalized_engine_id not in _CLASSIC_FLOW_MASKED_IMG2IMG_ENGINES:
             raise NotImplementedError(f"masking is not supported for engine '{normalized_engine_id}' img2img yet")
         return "flow"
     raise NotImplementedError(
@@ -910,7 +911,7 @@ def generate_img2img(
             if batch_total != 1:
                 raise NotImplementedError("mask_region_split is only supported for batch_total=1")
 
-            raw_mask = getattr(processing, "mask", None) or getattr(processing, "image_mask", None)
+            raw_mask = getattr(processing, "mask", None)
             if raw_mask is None:
                 raise ValueError("mask_region_split requires a non-null mask")
 
@@ -1077,7 +1078,7 @@ def generate_img2img(
                 bundle.tensor,
                 bundle.latents,
                 image_mask=bundle.mask,
-                round_mask=getattr(processing, "round_image_mask", True),
+                round_mask=getattr(processing, "mask_round", True),
             )
         processing.image_conditioning = image_conditioning
         init_latent = bundle.latents

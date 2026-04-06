@@ -176,14 +176,6 @@
     gap: var(--space-lg);
     min-width: 0;
   }
-  .panel-actions {
-    margin-left: auto;
-    display: inline-flex;
-    align-items: center;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-    gap: var(--space-sm);
-  }
   .form-field {
     display: flex;
     flex-direction: column;
@@ -380,11 +372,6 @@
     display: flex;
     align-items: center;
     gap: var(--space-sm);
-  }
-  .cdx-stack {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-md);
   }
   .form-grid {
     @apply grid gap-3 md:grid-cols-2;
@@ -799,7 +786,6 @@
   @import './styles/components/refiner-settings-card.css';
   @import './styles/components/result-viewer.css';
   @import './styles/components/inpaint-mask-editor.css';
-  @import './styles/components/base-tab-header.css';
   @import './styles/components/prompt-fields.css';
   @import './styles/components/video-settings-card.css';
   @import './styles/components/video-generation-cards.css';

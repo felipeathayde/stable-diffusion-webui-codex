@@ -170,46 +170,8 @@
       "choices_source": null
     },
     {
-      "key": "codex_core_device",
-      "label": "(Codex) Core device",
-      "type": "dropdown",
-      "section": "system",
-      "default": "auto",
-      "min": null,
-      "max": null,
-      "step": null,
-      "choices": [
-        "auto",
-        "cuda",
-        "cpu",
-        "mps",
-        "xpu",
-        "directml"
-      ],
-      "choices_source": null
-    },
-    {
-      "key": "codex_te_device",
-      "label": "(Codex) Text encoder device",
-      "type": "dropdown",
-      "section": "system",
-      "default": "auto",
-      "min": null,
-      "max": null,
-      "step": null,
-      "choices": [
-        "auto",
-        "cuda",
-        "cpu",
-        "mps",
-        "xpu",
-        "directml"
-      ],
-      "choices_source": null
-    },
-    {
-      "key": "codex_vae_device",
-      "label": "(Codex) VAE device",
+      "key": "codex_main_device",
+      "label": "(Codex) Main device",
       "type": "dropdown",
       "section": "system",
       "default": "auto",

@@ -1546,14 +1546,14 @@ async function sendToWorkflows(): Promise<void> {
   if (!tab.value) return
   workflowBusy.value = true
   try {
-    await workflows.createSnapshot({
+    const result = await workflows.saveSnapshot({
       name: `${tab.value.title} — ${new Date().toLocaleString()}`,
       source_tab_id: tab.value.id,
       type: tab.value.type,
       engine_semantics: tab.value.type === 'wan' ? 'wan22' : tab.value.type,
       params_snapshot: tab.value.params as Record<string, unknown>,
     })
-    toast('Snapshot saved to Workflows.')
+    toast(result.action === 'updated' ? 'Snapshot updated in Workflows.' : 'Snapshot saved to Workflows.')
   } catch (e) {
     toast(e instanceof Error ? e.message : String(e))
   } finally {

@@ -108,11 +108,11 @@ def resolve_noise_settings(processing: Any) -> NoiseSettings:
     eta_delta = 0
     overrides = getattr(processing, "override_settings", {})
     if isinstance(overrides, dict):
-        source = overrides.get("randn_source") or overrides.get("noise_source")
+        source = overrides.get("noise_source")
         eta_delta = overrides.get("eta_noise_seed_delta", eta_delta)
     metadata = getattr(processing, "metadata", {})
     if isinstance(metadata, dict):
-        source = metadata.get("randn_source", source)
+        source = metadata.get("noise_source", source)
     if getattr(processing, "noise_source", None):
         source = processing.noise_source
 
@@ -121,7 +121,7 @@ def resolve_noise_settings(processing: Any) -> NoiseSettings:
     else:
         if not isinstance(source, str):
             raise ValueError(
-                "randn_source/noise_source must be a string when provided "
+                "noise_source must be a string when provided "
                 f"(got {type(source).__name__})."
             )
         normalized_source = source.strip()
@@ -133,7 +133,7 @@ def resolve_noise_settings(processing: Any) -> NoiseSettings:
             except ValueError as exc:
                 allowed = ", ".join(member.value for member in NoiseSourceKind)
                 raise ValueError(
-                    f"Invalid randn_source/noise_source value {source!r}. "
+                    f"Invalid noise_source value {source!r}. "
                     f"Allowed: {allowed}."
                 ) from exc
 
@@ -198,7 +198,9 @@ def build_sampling_plan(
 
 def ensure_sampler(processing: Any, plan: SamplingPlan) -> CodexSampler:
     """Ensure processing has a sampler configured for the current plan."""
-    algo = plan.sampler_name or getattr(processing, "sampler_name", None)
+    algo = plan.sampler_name
+    if not isinstance(algo, str) or not algo:
+        raise ValueError("SamplingPlan.sampler_name must be a non-empty sampler name")
     processing.sampler = CodexSampler(processing.sd_model, algorithm=algo)
     return processing.sampler
 

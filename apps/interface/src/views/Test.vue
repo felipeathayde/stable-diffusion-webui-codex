@@ -8,10 +8,10 @@ Required Notice: see NOTICE
 
 Purpose: Internal/test view for WAN GGUF harness (canonical WAN payload builders + SSE streaming preview).
 Used for debugging WAN video generation, asset selection, and streaming task events without going through the full Model Tabs UX.
-Builds stage payloads with explicit WAN scheduler fields so the harness stays aligned with the live WAN request contract.
+Builds canonical WAN payloads with explicit top-level core owners plus minimal `wan_high` overrides so the harness stays aligned with the live request contract.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `Test` (component): WAN GGUF harness UI; builds canonical WAN payloads (including explicit stage scheduler fields), starts tasks, subscribes to SSE events, and renders previews/results.
+- `Test` (component): WAN GGUF harness UI; builds canonical WAN payloads (including explicit top-level core WAN fields), starts tasks, subscribes to SSE events, and renders previews/results.
 - `toDataUrl` (function): Converts a `GeneratedImage` payload into a data URL for rendering.
 - `stopStream` (function): Unsubscribes from the active task SSE stream (if any).
 - `readFileAsDataURL` (function): Reads a `File` into a data URL (used for init image upload).
@@ -408,17 +408,17 @@ async function generate(): Promise<void> {
       height: state.height,
       fps: state.fps,
       frames: state.frames,
+      prompt: state.prompt,
+      negativePrompt: state.negative,
+      sampler: state.sampler,
+      scheduler: 'simple',
+      steps: state.high.steps,
+      cfgScale: state.high.cfgScale,
+      seed: state.seed,
       attentionMode: 'global' as const,
       format: resolveWanFormat(),
       high: {
         modelSha: highSha,
-        prompt: state.prompt,
-        negativePrompt: state.negative,
-        sampler: state.sampler,
-        scheduler: 'simple',
-        steps: state.high.steps,
-        cfgScale: state.high.cfgScale,
-        seed: state.seed,
         loras: buildStageLoras('high', state.high.useLora, state.high.loraSha, state.high.loraWeight),
       },
       low: {

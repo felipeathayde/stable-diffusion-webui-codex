@@ -8,8 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Engine package facade and default registration entry points.
 Exposes `register_default_engines(...)` and lazily resolves optional/large engine classes to avoid heavy imports during startup.
-Includes the Anima, FLUX.2, staged LTX2, and staged Netflix VOID engine facades (registered under engine ids
-`anima` / `flux2` / `ltx2` / `netflix_void`).
+Includes the Anima, FLUX.2, and LTX2 engine facades; parked placeholder families such as `netflix_void`
+remain importable by name but are not part of default runtime registration.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `EngineLoadError` (class): Error raised when an engine fails to load required resources.
@@ -75,7 +75,6 @@ def register_default_engines(*, registry: EngineRegistry | None = None, replace:
     _maybe_register("flux1", registration.register_flux)
     _maybe_register("flux2", registration.register_flux2)
     _maybe_register("ltx2", registration.register_ltx2)
-    _maybe_register("netflix_void", registration.register_netflix_void)
     _maybe_register("flux1_kontext", registration.register_kontext)
     _maybe_register("flux1_chroma", registration.register_chroma)
     _maybe_register("sd20", registration.register_sd20)

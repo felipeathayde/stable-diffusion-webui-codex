@@ -633,9 +633,9 @@ def prepare_masked_img2img_bundle(
     if init_image is None:
         raise ValueError("masked img2img requires processing.init_image")
 
-    raw_mask = getattr(processing, "mask", None) or getattr(processing, "image_mask", None)
+    raw_mask = getattr(processing, "mask", None)
     if raw_mask is None:
-        raise ValueError("masked img2img requires processing.mask (or processing.image_mask)")
+        raise ValueError("masked img2img requires processing.mask")
 
     _validate_mask_enforcement(enforce_mode)
 
@@ -699,7 +699,7 @@ def prepare_masked_img2img_bundle(
             processing.update_extra_param("Masked content", "fill")
 
     init_tensor = pil_to_tensor([image_for_sampling])
-    round_conditioning_mask = bool(getattr(processing, "round_image_mask", True))
+    round_conditioning_mask = bool(getattr(processing, "mask_round", True))
     per_step_blend_strength = float(getattr(processing, "per_step_blend_strength"))
     per_step_blend_steps = LatentMaskEnforcer._parse_configured_steps(getattr(processing, "per_step_blend_steps", None))
     if not math.isfinite(per_step_blend_strength):

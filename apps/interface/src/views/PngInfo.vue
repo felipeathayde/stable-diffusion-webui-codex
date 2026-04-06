@@ -251,6 +251,7 @@ import { useModelTabsStore } from '../stores/model_tabs'
 import { useQuicksettingsStore } from '../stores/quicksettings'
 import { useWorkflowsStore } from '../stores/workflows'
 import { resolveImageRequestEngineId, type TabFamily } from '../utils/engine_taxonomy'
+import { buildUseInitImagePatch } from '../utils/image_params'
 import { mapCheckpointTitle, mapSamplerScheduler, parseComfyPromptJson, parseInfotext, type ParsedInfotext } from '../utils/pnginfo'
 import ResultsCard from '../components/results/ResultsCard.vue'
 import Dropzone from '../components/ui/Dropzone.vue'
@@ -568,17 +569,13 @@ function buildImageParamsPatch(options: { mode: TargetMode; includeInitImage: bo
   }
 
   if (options.mode === 'txt2img') {
-    patch.useInitImage = false
-    patch.initImageData = ''
-    patch.initImageName = ''
+    Object.assign(patch, buildUseInitImagePatch(false))
   } else if (options.includeInitImage) {
-    patch.useInitImage = true
+    Object.assign(patch, buildUseInitImagePatch(true))
     patch.initImageData = previewDataUrl.value
     patch.initImageName = selectedFile.value?.name || ''
   } else {
-    patch.useInitImage = false
-    patch.initImageData = ''
-    patch.initImageName = ''
+    Object.assign(patch, buildUseInitImagePatch(false))
   }
 
   return { patch, warnings: allWarnings.value }
@@ -587,8 +584,10 @@ function buildImageParamsPatch(options: { mode: TargetMode; includeInitImage: bo
 async function maybeApplyVae(): Promise<{ appliedLabel?: string; error?: string }> {
   const label = resolvedVaeLabel.value
   if (!label) return {}
+  const family = targetTabFamily.value
+  if (!family) return { error: 'Selected target tab does not support family-owned VAE apply.' }
   try {
-    await quicksettings.setVae(label)
+    await quicksettings.setVaeForFamily(family, label)
     return { appliedLabel: label }
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) }
@@ -601,8 +600,12 @@ async function saveSnapshot(): Promise<void> {
 
   workflowBusy.value = true
   try {
-    const { patch } = buildImageParamsPatch({ mode: 'txt2img', includeInitImage: false })
-    await workflows.createSnapshot({
+    const snapshotMode = targetMode.value
+    const { patch } = buildImageParamsPatch({
+      mode: snapshotMode,
+      includeInitImage: snapshotMode === 'img2img',
+    })
+    const result = await workflows.saveSnapshot({
       name: `${selectedFile.value.name} — ${new Date().toLocaleString()}`,
       source_tab_id: targetTab.value.id,
       type: targetTab.value.type,
@@ -611,11 +614,11 @@ async function saveSnapshot(): Promise<void> {
     })
     const vae = await maybeApplyVae()
     if (vae.error) {
-      toast(`Snapshot saved. VAE not applied: ${vae.error}`)
+      toast(`${result.action === 'updated' ? 'Snapshot updated' : 'Snapshot saved'}. VAE not applied: ${vae.error}`)
     } else if (vae.appliedLabel) {
-      toast(`Snapshot saved. VAE: ${vae.appliedLabel}`)
+      toast(`${result.action === 'updated' ? 'Snapshot updated' : 'Snapshot saved'}. VAE: ${vae.appliedLabel}`)
     } else {
-      toast('Snapshot saved to Workflows.')
+      toast(result.action === 'updated' ? 'Snapshot updated in Workflows.' : 'Snapshot saved to Workflows.')
     }
   } catch (err) {
     toast(err instanceof Error ? err.message : String(err))
@@ -675,7 +678,7 @@ onMounted(async () => {
 watch([compatibleTabs, () => tabs.activeTab], () => {
   if (targetTabId.value && compatibleTabs.value.some(t => t.id === targetTabId.value)) return
   const active = tabs.activeTab
-  if (active && active.type !== 'wan' && active.type !== 'ltx2') {
+  if (active && compatibleTabs.value.some((tab) => tab.id === active.id)) {
     targetTabId.value = active.id
     return
   }

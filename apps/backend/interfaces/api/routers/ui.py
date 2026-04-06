@@ -9,9 +9,9 @@ Required Notice: see NOTICE
 Purpose: UI persistence and metadata API routes.
     Handles tabs/workflows JSON persistence, UI blocks filtering, and presets application, with fail-loud tab-type validation for `/api/ui/tabs`
     while filtering stale unsupported top-level tab params during stored-tab load and rejecting unknown top-level LTX keys on create/update.
-    Normalizes WAN tab aliases (`wan22`, `wan22_5b`, `wan22_14b`, `wan22_14b_animate`) into the canonical UI `wan` tab type and accepts
-    a dedicated `ltx2` video workspace tab type. Image-tab persistence also owns the allowlist for nested automation-era params such as
-    `runAction`, `initSource`, `supir`, and `ipAdapter`.
+    Normalizes WAN tab aliases (`wan22`, `wan22_5b`, `wan22_14b`, `wan22_14b_animate`) into the canonical UI `wan` tab type, keeps workflow
+    snapshot payloads/source-tab bindings normalized and unique, and accepts a dedicated `ltx2` video workspace tab type. Image-tab persistence
+    also owns the allowlist for nested automation-era params such as `runAction`, `initSource`, `supir`, and `ipAdapter`.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `build_router` (function): Build the APIRouter for UI endpoints.
@@ -164,7 +164,6 @@ def build_router(
         "img2imgUpscaler",
         "guidanceAdvanced",
         "hires",
-        "highres",  # legacy alias persisted by older clients
         "swapModel",
         "refiner",
         "checkpoint",
@@ -215,7 +214,6 @@ def build_router(
         "checkpoint",
         "vae",
         "textEncoder",
-        "useInitImage",
         "initImageData",
         "initImageName",
         "videoReturnFrames",
@@ -223,7 +221,6 @@ def build_router(
     _NESTED_OBJECT_PARAM_KEYS = {
         "guidanceAdvanced",
         "hires",
-        "highres",
         "swapModel",
         "refiner",
         "initSource",
@@ -315,10 +312,6 @@ def build_router(
             sanitized["textEncoders"], list
         ):
             raise HTTPException(status_code=400, detail=f"{field}.textEncoders must be an array")
-        if tab_type != "wan" and "highres" in sanitized:
-            if "hires" not in sanitized and isinstance(sanitized["highres"], dict):
-                sanitized["hires"] = sanitized["highres"]
-            del sanitized["highres"]
         return sanitized
 
     def _sanitize_stored_tab_params(*, tab_type: str, raw_params: object, tab_id: str) -> Dict[str, Any]:
@@ -462,6 +455,48 @@ def build_router(
         nonlocal _tabs_cache, _tabs_mtime
         _tabs_cache, _tabs_mtime = data, stat.st_mtime
 
+    def _sanitize_workflow_source_tab_id(value: object, *, field: str, required: bool) -> str:
+        normalized = str(value or "").strip()
+        if required and not normalized:
+            raise HTTPException(status_code=400, detail=f"{field} must be a non-empty string")
+        return normalized
+
+    def _sanitize_stored_workflow_params_snapshot(*, workflow_type: str, raw_params: object, workflow_id: str) -> Dict[str, Any]:
+        if raw_params is None:
+            return {}
+        try:
+            return _sanitize_tab_params_patch(
+                tab_type=workflow_type,
+                raw_params=raw_params,
+                field="params_snapshot",
+                reject_unknown=(workflow_type == "ltx2"),
+            )
+        except HTTPException as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"workflows.json invalid: workflow '{workflow_id}' {exc.detail}",
+            ) from exc
+
+    def _assert_unique_workflow_source_tab_id(
+        workflows: list[Dict[str, Any]],
+        source_tab_id: str,
+        *,
+        exclude_workflow_id: Optional[str] = None,
+    ) -> None:
+        normalized = str(source_tab_id or "").strip()
+        if not normalized:
+            return
+        for workflow in workflows:
+            workflow_id = str(workflow.get("id") or "").strip()
+            if exclude_workflow_id is not None and workflow_id == exclude_workflow_id:
+                continue
+            candidate = str(workflow.get("source_tab_id") or "").strip()
+            if candidate == normalized:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"workflow source_tab_id '{normalized}' is already bound to workflow '{workflow_id}'",
+                )
+
     def _load_workflows() -> Dict[str, Any]:
         nonlocal _workflows_cache, _workflows_mtime
         _ensure_dirs()
@@ -483,14 +518,71 @@ def build_router(
         workflows = data.get("workflows")
         if not isinstance(workflows, list):
             raise HTTPException(status_code=500, detail="workflows.json invalid: missing 'workflows' array")
+        normalized_workflows: list[Dict[str, Any]] = []
+        changed = False
+        seen_source_tab_ids: dict[str, str] = {}
         for index, workflow in enumerate(workflows):
             if not isinstance(workflow, dict):
                 raise HTTPException(
                     status_code=500,
                     detail=f"workflows.json invalid: entry #{index + 1} must be object",
                 )
-        _workflows_cache, _workflows_mtime = data, stat.st_mtime
-        return data
+            workflow_id = str(workflow.get("id") or "").strip()
+            if not workflow_id:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"workflows.json invalid: entry #{index + 1} is missing a non-empty 'id'",
+                )
+            try:
+                workflow_type = _normalize_tab_type(workflow.get("type"))
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"workflows.json invalid: workflow '{workflow_id}' {exc}",
+                ) from exc
+            source_tab_id = str(workflow.get("source_tab_id") or "").strip()
+            if not source_tab_id:
+                raise HTTPException(
+                    status_code=500,
+                    detail=(
+                        f"workflows.json invalid: workflow '{workflow_id}' is missing a non-empty "
+                        "'source_tab_id'"
+                    ),
+                )
+            duplicate_owner = seen_source_tab_ids.get(source_tab_id)
+            if duplicate_owner is not None:
+                raise HTTPException(
+                    status_code=500,
+                    detail=(
+                        f"workflows.json invalid: source_tab_id '{source_tab_id}' is bound to both "
+                        f"'{duplicate_owner}' and '{workflow_id}'"
+                    ),
+                )
+            seen_source_tab_ids[source_tab_id] = workflow_id
+            params_snapshot = _sanitize_stored_workflow_params_snapshot(
+                workflow_type=workflow_type,
+                raw_params=workflow.get("params_snapshot"),
+                workflow_id=workflow_id,
+            )
+            created_at = str(workflow.get("created_at") or "").strip() or datetime.utcnow().isoformat()
+            normalized_workflow = {
+                "id": workflow_id,
+                "name": str(workflow.get("name") or workflow_id),
+                "source_tab_id": source_tab_id,
+                "type": workflow_type,
+                "created_at": created_at,
+                "engine_semantics": str(workflow.get("engine_semantics") or workflow_type).strip() or workflow_type,
+                "params_snapshot": params_snapshot,
+            }
+            if workflow != normalized_workflow:
+                changed = True
+            normalized_workflows.append(normalized_workflow)
+        out = {"version": int(data.get("version", 1)), "workflows": normalized_workflows}
+        if changed:
+            _save_workflows(out)
+            return out
+        _workflows_cache, _workflows_mtime = out, stat.st_mtime
+        return out
 
     def _save_workflows(data: Dict[str, Any]) -> None:
         _ensure_dirs()
@@ -624,7 +716,11 @@ def build_router(
         wfs = list(data.get("workflows") or [])
         wf_id = f"wf-{int(time.time()*1000)}"
         name = str(payload.get("name") or wf_id)
-        source_tab_id = str(payload.get("source_tab_id") or "")
+        source_tab_id = _sanitize_workflow_source_tab_id(
+            payload.get("source_tab_id"),
+            field="source_tab_id",
+            required=True,
+        )
         raw_type = str(payload.get("type") or "").strip().lower()
         if not raw_type:
             raise HTTPException(status_code=400, detail="workflow type is required")
@@ -633,11 +729,18 @@ def build_router(
         if raw_type not in _ALLOWED_TAB_TYPES and raw_type not in ("wan22", "wan22_14b", "wan22_5b", "wan22_14b_animate"):
             raise HTTPException(status_code=400, detail=f"invalid workflow type: {raw_type}")
         wtype = _normalize_tab_type(raw_type)
-        params_snapshot = payload.get("params_snapshot")
-        if params_snapshot is None:
-            params_snapshot = {}
-        if not isinstance(params_snapshot, dict):
+        raw_params_snapshot = payload.get("params_snapshot")
+        if raw_params_snapshot is None:
+            raw_params_snapshot = {}
+        if not isinstance(raw_params_snapshot, dict):
             raise HTTPException(status_code=400, detail="params_snapshot must be an object")
+        params_snapshot = _sanitize_tab_params_patch(
+            tab_type=wtype,
+            raw_params=raw_params_snapshot,
+            field="params_snapshot",
+            reject_unknown=(wtype == "ltx2"),
+        )
+        _assert_unique_workflow_source_tab_id(wfs, source_tab_id)
         now = datetime.utcnow().isoformat()
         wf = {
             "id": wf_id,
@@ -659,10 +762,30 @@ def build_router(
         updated = False
         for w in data["workflows"]:
             if str(w.get("id")) == wf_id:
+                if "type" in payload:
+                    raise HTTPException(status_code=400, detail="workflow type is immutable")
+                if "engine_semantics" in payload:
+                    raise HTTPException(status_code=400, detail="workflow engine_semantics is immutable")
                 if "name" in payload:
                     w["name"] = str(payload["name"])
+                if "source_tab_id" in payload:
+                    source_tab_id = _sanitize_workflow_source_tab_id(
+                        payload.get("source_tab_id"),
+                        field="source_tab_id",
+                        required=True,
+                    )
+                    _assert_unique_workflow_source_tab_id(data["workflows"], source_tab_id, exclude_workflow_id=wf_id)
+                    w["source_tab_id"] = source_tab_id
                 if "params_snapshot" in payload and isinstance(payload["params_snapshot"], dict):
-                    w["params_snapshot"] = payload["params_snapshot"]
+                    workflow_type = _normalize_tab_type(w.get("type"))
+                    w["params_snapshot"] = _sanitize_tab_params_patch(
+                        tab_type=workflow_type,
+                        raw_params=payload["params_snapshot"],
+                        field="params_snapshot",
+                        reject_unknown=(workflow_type == "ltx2"),
+                    )
+                elif "params_snapshot" in payload:
+                    raise HTTPException(status_code=400, detail="params_snapshot must be an object")
                 updated = True
                 break
         if not updated:

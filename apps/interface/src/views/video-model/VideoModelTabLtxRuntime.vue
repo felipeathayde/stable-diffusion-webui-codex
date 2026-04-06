@@ -8,8 +8,8 @@ Required Notice: see NOTICE
 
 Purpose: Renderless LTX runtime helper for the canonical video tab view.
 Mounts the existing LTX composable/watcher runtime under a view-local seam and exposes reactive slot props to `VideoModelTab.vue`,
-while keeping the route-owned video view as the only live body/layout owner and wiring compact LTX results/history actions into the shared WAN-baseline
-Results surface.
+while keeping the route-owned video view as the only live body/layout owner and wiring compact LTX results/history actions plus truthful
+save-or-update workflow snapshot notices into the shared WAN-baseline Results surface.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `VideoModelTabLtxRuntime` (component): Renderless LTX runtime helper for `VideoModelTab.vue`.
@@ -19,7 +19,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `ensureExecutionProfileVisible` (function): Preserves stale persisted execution-profile values in the local selector option list.
 - `normalizeDimensionInput` / `normalizeFrameInput` (functions): Bound LTX geometry/frame edits to the truthful numeric domain without silently snapping alignment.
 - `setVideoZoomOpen` / `openResultVideoZoom` (functions): Parent-facing exported-video zoom visibility bridge setters.
-- `sendToWorkflows` / `copyCurrentParams` / `onSelectHistoryItem` (functions): Parent-facing Results header/history actions exposed to the shared WAN-baseline Results owner.
+- `sendToWorkflows` / `copyCurrentParams` / `onSelectHistoryItem` (functions): Parent-facing Results header/history actions exposed to the shared WAN-baseline Results owner, including truthful save-vs-update Workflow notices.
 - `slotProps` (const): Reactive slot-prop bundle exposed to `VideoModelTab.vue`.
 -->
 
@@ -287,7 +287,6 @@ async function onInitImageFile(file: File): Promise<void> {
     const dataUrl = await readFileAsDataURL(file)
     updateParamsPatch({
       mode: 'img2vid',
-      useInitImage: true,
       initImageData: dataUrl,
       initImageName: file.name,
     })
@@ -335,14 +334,14 @@ async function sendToWorkflows(): Promise<void> {
   if (!tab.value) return
   workflowBusy.value = true
   try {
-    await workflows.createSnapshot({
+    const result = await workflows.saveSnapshot({
       name: `${tab.value.title} — ${new Date().toLocaleString()}`,
       source_tab_id: tab.value.id,
       type: tab.value.type,
       engine_semantics: tab.value.type,
       params_snapshot: params.value as unknown as Record<string, unknown>,
     })
-    toast('Snapshot saved to Workflows.')
+    toast(result.action === 'updated' ? 'Snapshot updated in Workflows.' : 'Snapshot saved to Workflows.')
   } catch (error) {
     toast(error instanceof Error ? error.message : String(error))
   } finally {
@@ -352,6 +351,7 @@ async function sendToWorkflows(): Promise<void> {
 
 async function copyCurrentParams(): Promise<void> {
   if (!params.value) return
+  resumeNotice.value = ''
   await copyJson(params.value as unknown as Record<string, unknown>, 'Copied params.')
 }
 

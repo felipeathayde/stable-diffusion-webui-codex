@@ -13,7 +13,8 @@ hints now disappear when checkpoint inventory metadata lacks a valid `core_only`
 first-class as the current Klein 4B / base-4B slice (single Qwen3-4B selector, backend-capability-driven img2img/inpaint gating, no FLUX.1 aliasing).
 For LTX, QuickSettings remains the owner of mode + checkpoint/VAE/text-encoder selection only; execution-profile defaults are checkpoint-aware
 workspace state, not a second raw sampler/scheduler control surface in the shared header. Native SDXL SUPIR mode now also exposes a shared-header toggle here,
-with readiness/blocking resolved from the same diagnostics owner used by the body surface.
+with readiness/blocking resolved from the same diagnostics owner used by the body surface. Outside `/models/:tabId`, model-asset selectors stay summary-only/read-only
+and redirect the user back to a real model-tab owner instead of mutating misleading global checkpoint/VAE/text-encoder state.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `QuickSettingsBar` (component): Main QuickSettings SFC; includes “advanced” UI, per-family subcomponents, and selector filtering logic.
@@ -22,6 +23,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `currentTab` (function): Determines the current tab kind (`txt2img`/`img2img`/`txt2vid`/`img2vid`) from routing/state.
 - `tabFamilyFromStorage` (function): Loads persisted per-tab family from local storage (used to keep UI consistent on reload).
 - `resolvedRouteTabFamily` (computed): Resolves the route-tab family from hydrated tab state or persisted tab refs.
+- `modelAssetSelectorsReadOnly` (computed): Marks checkpoint/VAE/text-encoder selectors as summary-only outside `/models/:tabId`.
+- `modelAssetOwnerRoute` (computed): Resolves the navigation target for reopening the real model-tab owner from read-only routes.
 - `routeTabHydrating` (computed): Tracks whether `/models/:tabId` is still waiting on the hydrated tab object and must not render any family branch yet.
 - `routeTabLoadFailed` (computed): Tracks whether `/models/:tabId` failed to load tab state and must show an explicit load-failure placeholder.
 - `routeTabMissing` (computed): Tracks whether `/models/:tabId` finished syncing without a matching tab and must show an explicit not-found placeholder.
@@ -41,6 +44,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `WanAssetsParams` (type): Minimal WAN assets triple used for payload building (metadata dir + TE + VAE).
 - `currentWanAssets` (function): Builds `WanAssetsParams` from current UI selections (used by WAN payload generation).
 - `flux2TextEncoderFieldLabel` (computed): Resolves the truthful FLUX.2 Klein Qwen3-4B selector label from backend asset contracts.
+- `toastModelAssetOwnerRequired` (function): Explains that model-asset selectors are read-only outside `/models/:tabId`.
 - `onPrimaryTextEncoderChange` (function): Applies primary text-encoder selection changes (and triggers dependent updates).
 - `onSecondaryTextEncoderChange` (function): Applies secondary text-encoder selection changes (FLUX.1 dual-encoder workflow only).
 - `onSmartOffloadChange` (function): Updates Smart Offload toggle (impacts per-request memory behavior).
@@ -56,7 +60,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `onWanModeChange` (function): Updates WAN mode selection and derived controls.
 - `onWanBrowseModels` (function): Opens the shared add-path modal for WAN model roots (`wan22_ckpt`) from the WAN quicksettings `+` action.
 - `onWanGuidedGen` (function): Opens WAN guided generation flow (UI navigation/CTA).
-- `activeLtxMode` (computed): Resolves the authoritative LTX `txt2vid|img2vid` mode from the active tab params or persisted resume marker.
+- `activeLtxMode` (computed): Resolves the authoritative LTX `txt2vid|img2vid` mode from the active tab params.
 - `activeLtxRouteTabId` (computed): Resolves the route-scoped LTX tab id even before full tab hydration completes.
 - `isActiveLtxTabRunning` (computed): Tracks whether the route-scoped LTX tab currently has an in-flight generation task.
 - `ltxRouteHydrating` (computed): Tracks whether the LTX quicksettings row is waiting for route-tab hydration.
@@ -146,328 +150,382 @@ Symbols (top-level; keep in sync; no ghosts):
       </template>
       <!-- WAN-specific quicksettings -->
       <template v-else-if="activeFamily === 'wan'">
-        <QuickSettingsWan
-          :mode="wanModelMode"
-          :lightx2v="wanLightx2v"
-          :high-model="wanHighModel"
-          :high-choices="wanHighDirChoices"
-          :low-model="wanLowModel"
-          :low-choices="wanLowDirChoices"
-          :text-encoder="wanTextEncoder"
-          :text-encoder-choices="wanTextEncoderChoices"
-          :vae="wanVae"
-          :vae-choices="wanVaeChoices"
-          @update:mode="onWanModeChange"
-          @update:lightx2v="onWanLightx2vChange"
-          @update:highModel="onWanHighModelChange"
-          @update:lowModel="onWanLowModelChange"
-          @update:textEncoder="onWanTextEncoderChange"
-          @update:vae="onWanVaeChange"
-          @browseModels="onWanBrowseModels"
-          @browseTe="onWanBrowseTe"
-          @browseVae="onWanBrowseVae"
-          @refresh="refreshAll"
-          @showMetadata="onShowMetadata"
-        />
+        <div v-if="modelAssetSelectorsReadOnly" class="quicksettings-group qs-group-owner-note">
+          <label class="label-muted">Model Tab Owner</label>
+          <div class="qs-row qs-row-wrap">
+            <span class="caption">Checkpoint, VAE, and Text Encoder are read-only here.</span>
+            <RouterLink class="btn qs-btn-outline qs-inline-btn" :to="modelAssetOwnerRoute">Open model tab</RouterLink>
+          </div>
+        </div>
+        <fieldset class="qs-readonly-fieldset" :disabled="modelAssetSelectorsReadOnly">
+          <QuickSettingsWan
+            :mode="wanModelMode"
+            :lightx2v="wanLightx2v"
+            :high-model="wanHighModel"
+            :high-choices="wanHighDirChoices"
+            :low-model="wanLowModel"
+            :low-choices="wanLowDirChoices"
+            :text-encoder="wanTextEncoder"
+            :text-encoder-choices="wanTextEncoderChoices"
+            :vae="wanVae"
+            :vae-choices="wanVaeChoices"
+            @update:mode="onWanModeChange"
+            @update:lightx2v="onWanLightx2vChange"
+            @update:highModel="onWanHighModelChange"
+            @update:lowModel="onWanLowModelChange"
+            @update:textEncoder="onWanTextEncoderChange"
+            @update:vae="onWanVaeChange"
+            @browseModels="onWanBrowseModels"
+            @browseTe="onWanBrowseTe"
+            @browseVae="onWanBrowseVae"
+            @refresh="refreshAll"
+            @showMetadata="onShowMetadata"
+          />
+        </fieldset>
       </template>
 
       <!-- FLUX-family-specific quicksettings -->
       <template v-else-if="activeFamily === 'flux1' || activeFamily === 'flux2'">
-        <QuickSettingsFlux
-          v-if="activeFamily === 'flux1'"
-          :checkpoint="effectiveCheckpoint"
-          :checkpoints="filteredModelTitles"
-          :vae="store.currentVae"
-          :vae-choices="filteredVaeChoices"
-          :text-encoder-primary="flux1TextEncoderPrimary"
-          :text-encoder-secondary="flux1TextEncoderSecondary"
-          :text-encoder-choices="filteredTextEncoderChoices"
-          @update:checkpoint="onModelChange"
-          @update:vae="onVaeChange"
-          @update:textEncoderPrimary="onPrimaryTextEncoderChange"
-          @update:textEncoderSecondary="onSecondaryTextEncoderChange"
-          @addCheckpointPath="onAddCheckpointPath"
-          @addVaePath="onAddVaePath"
-          @addTencPath="onAddTencPath"
-          @showMetadata="onShowMetadata"
-        />
-        <QuickSettingsFlux2
-          v-else
-          :checkpoint="effectiveCheckpoint"
-          :checkpoints="filteredModelTitles"
-          :vae="store.currentVae"
-          :vae-choices="filteredVaeChoices"
-          :text-encoder="flux2TextEncoder"
-          :text-encoder-choices="filteredTextEncoderChoices"
-          :text-encoder-field-label="flux2TextEncoderFieldLabel"
-          @update:checkpoint="onModelChange"
-          @update:vae="onVaeChange"
-          @update:textEncoder="onPrimaryTextEncoderChange"
-          @addCheckpointPath="onAddCheckpointPath"
-          @addVaePath="onAddVaePath"
-          @addTencPath="onAddTencPath"
-          @showMetadata="onShowMetadata"
-        />
-        <div v-if="canShowModeToggles" class="quicksettings-group qs-group-mode-toggle">
-          <label class="label-muted">Mode</label>
-          <div class="qs-row">
-            <button
-              :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', useInitImage ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-              type="button"
-              :aria-pressed="useInitImage"
-              @click="onUseInitImageChange(!useInitImage)"
-            >
-              IMG2IMG
-            </button>
-            <button
-              :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', useMask ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-              type="button"
-              :aria-pressed="useMask"
-              :disabled="inpaintToggleDisabled"
-              :title="inpaintToggleTitle"
-              @click="onUseMaskChange(!useMask)"
-            >
-              INPAINT
-            </button>
+        <div v-if="modelAssetSelectorsReadOnly" class="quicksettings-group qs-group-owner-note">
+          <label class="label-muted">Model Tab Owner</label>
+          <div class="qs-row qs-row-wrap">
+            <span class="caption">Checkpoint, VAE, and Text Encoder are read-only here.</span>
+            <RouterLink class="btn qs-btn-outline qs-inline-btn" :to="modelAssetOwnerRoute">Open model tab</RouterLink>
           </div>
         </div>
-        <div class="quicksettings-group qs-group-models">
-          <label class="label-muted">Models</label>
-          <div class="qs-row">
-            <button
-              class="btn qs-btn-secondary qs-refresh-btn"
-              type="button"
-              :disabled="isLoadingQuicksettings"
-              title="Refresh lists"
-              @click="refreshAll"
-            >
-              Refresh
-            </button>
+        <fieldset class="qs-readonly-fieldset" :disabled="modelAssetSelectorsReadOnly">
+          <QuickSettingsFlux
+            v-if="activeFamily === 'flux1'"
+            :checkpoint="effectiveCheckpoint"
+            :checkpoints="filteredModelTitles"
+            :vae="store.currentVae"
+            :vae-choices="filteredVaeChoices"
+            :text-encoder-primary="flux1TextEncoderPrimary"
+            :text-encoder-secondary="flux1TextEncoderSecondary"
+            :text-encoder-choices="filteredTextEncoderChoices"
+            @update:checkpoint="onModelChange"
+            @update:vae="onVaeChange"
+            @update:textEncoderPrimary="onPrimaryTextEncoderChange"
+            @update:textEncoderSecondary="onSecondaryTextEncoderChange"
+            @addCheckpointPath="onAddCheckpointPath"
+            @addVaePath="onAddVaePath"
+            @addTencPath="onAddTencPath"
+            @showMetadata="onShowMetadata"
+          />
+          <QuickSettingsFlux2
+            v-else
+            :checkpoint="effectiveCheckpoint"
+            :checkpoints="filteredModelTitles"
+            :vae="store.currentVae"
+            :vae-choices="filteredVaeChoices"
+            :text-encoder="flux2TextEncoder"
+            :text-encoder-choices="filteredTextEncoderChoices"
+            :text-encoder-field-label="flux2TextEncoderFieldLabel"
+            @update:checkpoint="onModelChange"
+            @update:vae="onVaeChange"
+            @update:textEncoder="onPrimaryTextEncoderChange"
+            @addCheckpointPath="onAddCheckpointPath"
+            @addVaePath="onAddVaePath"
+            @addTencPath="onAddTencPath"
+            @showMetadata="onShowMetadata"
+          />
+          <div v-if="canShowModeToggles" class="quicksettings-group qs-group-mode-toggle">
+            <label class="label-muted">Mode</label>
+            <div class="qs-row">
+              <button
+                :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', useInitImage ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                type="button"
+                :aria-pressed="useInitImage"
+                @click="onUseInitImageChange(!useInitImage)"
+              >
+                IMG2IMG
+              </button>
+              <button
+                :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', useMask ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                type="button"
+                :aria-pressed="useMask"
+                :disabled="inpaintToggleDisabled"
+                :title="inpaintToggleTitle"
+                @click="onUseMaskChange(!useMask)"
+              >
+                INPAINT
+              </button>
+            </div>
           </div>
-        </div>
+          <div class="quicksettings-group qs-group-models">
+            <label class="label-muted">Models</label>
+            <div class="qs-row">
+              <button
+                class="btn qs-btn-secondary qs-refresh-btn"
+                type="button"
+                :disabled="isLoadingQuicksettings"
+                title="Refresh lists"
+                @click="refreshAll"
+              >
+                Refresh
+              </button>
+            </div>
+          </div>
+        </fieldset>
       </template>
 
       <!-- Z Image-specific quicksettings -->
       <template v-else-if="activeFamily === 'zimage'">
-        <QuickSettingsZImage
-          :checkpoint="effectiveCheckpoint"
-          :checkpoints="filteredModelTitles"
-          :turbo="zimageTurbo"
-          :turbo-locked="zimageTurboLocked"
-          :vae="store.currentVae"
-          :vae-choices="filteredVaeChoices"
-          :text-encoder="primaryTextEncoder"
-          :text-encoder-choices="filteredTextEncoderChoices"
-          @update:checkpoint="onModelChange"
-          @update:turbo="onZImageTurboChange"
-          @update:vae="onVaeChange"
-          @update:textEncoder="onPrimaryTextEncoderChange"
-          @addCheckpointPath="onAddCheckpointPath"
-          @addVaePath="onAddVaePath"
-          @addTencPath="onAddTencPath"
-          @showMetadata="onShowMetadata"
-        />
-        <div v-if="canShowModeToggles" class="quicksettings-group qs-group-mode-toggle qs-group-mode-toggle--end">
-          <label class="label-muted">Mode</label>
-          <div class="qs-row">
-            <button
-              :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', useInitImage ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-              type="button"
-              :aria-pressed="useInitImage"
-              @click="onUseInitImageChange(!useInitImage)"
-            >
-              IMG2IMG
-            </button>
-            <button
-              :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', useMask ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-              type="button"
-              :aria-pressed="useMask"
-              :disabled="inpaintToggleDisabled"
-              :title="inpaintToggleTitle"
-              @click="onUseMaskChange(!useMask)"
-            >
-              INPAINT
-            </button>
+        <div v-if="modelAssetSelectorsReadOnly" class="quicksettings-group qs-group-owner-note">
+          <label class="label-muted">Model Tab Owner</label>
+          <div class="qs-row qs-row-wrap">
+            <span class="caption">Checkpoint, VAE, and Text Encoder are read-only here.</span>
+            <RouterLink class="btn qs-btn-outline qs-inline-btn" :to="modelAssetOwnerRoute">Open model tab</RouterLink>
           </div>
         </div>
-        <div class="quicksettings-group qs-group-models">
-          <label class="label-muted">Models</label>
-          <div class="qs-row">
-            <button class="btn qs-btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh lists">Refresh</button>
+        <fieldset class="qs-readonly-fieldset" :disabled="modelAssetSelectorsReadOnly">
+          <QuickSettingsZImage
+            :checkpoint="effectiveCheckpoint"
+            :checkpoints="filteredModelTitles"
+            :turbo="zimageTurbo"
+            :turbo-locked="zimageTurboLocked"
+            :vae="store.currentVae"
+            :vae-choices="filteredVaeChoices"
+            :text-encoder="primaryTextEncoder"
+            :text-encoder-choices="filteredTextEncoderChoices"
+            @update:checkpoint="onModelChange"
+            @update:turbo="onZImageTurboChange"
+            @update:vae="onVaeChange"
+            @update:textEncoder="onPrimaryTextEncoderChange"
+            @addCheckpointPath="onAddCheckpointPath"
+            @addVaePath="onAddVaePath"
+            @addTencPath="onAddTencPath"
+            @showMetadata="onShowMetadata"
+          />
+          <div v-if="canShowModeToggles" class="quicksettings-group qs-group-mode-toggle qs-group-mode-toggle--end">
+            <label class="label-muted">Mode</label>
+            <div class="qs-row">
+              <button
+                :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', useInitImage ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                type="button"
+                :aria-pressed="useInitImage"
+                @click="onUseInitImageChange(!useInitImage)"
+              >
+                IMG2IMG
+              </button>
+              <button
+                :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', useMask ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                type="button"
+                :aria-pressed="useMask"
+                :disabled="inpaintToggleDisabled"
+                :title="inpaintToggleTitle"
+                @click="onUseMaskChange(!useMask)"
+              >
+                INPAINT
+              </button>
+            </div>
           </div>
-        </div>
+          <div class="quicksettings-group qs-group-models">
+            <label class="label-muted">Models</label>
+            <div class="qs-row">
+              <button class="btn qs-btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh lists">Refresh</button>
+            </div>
+          </div>
+        </fieldset>
       </template>
 
       <!-- Chroma-specific quicksettings -->
       <template v-else-if="activeFamily === 'chroma'">
-        <QuickSettingsChroma
-          :checkpoint="effectiveCheckpoint"
-          :checkpoints="filteredModelTitles"
-          :vae="store.currentVae"
-          :vae-choices="filteredVaeChoices"
-          :text-encoder="primaryTextEncoder"
-          :text-encoder-choices="filteredTextEncoderChoices"
-          :show-text-encoder="store.isModelCoreOnly(effectiveCheckpoint)"
-          @update:checkpoint="onModelChange"
-          @update:vae="onVaeChange"
-          @update:textEncoder="onPrimaryTextEncoderChange"
-          @addCheckpointPath="onAddCheckpointPath"
-          @addVaePath="onAddVaePath"
-          @addTencPath="onAddTencPath"
-          @showMetadata="onShowMetadata"
-        />
-        <div v-if="canShowModeToggles" class="quicksettings-group qs-group-mode-toggle">
-          <label class="label-muted">Mode</label>
-          <div class="qs-row">
-            <button
-              :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', useInitImage ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-              type="button"
-              :aria-pressed="useInitImage"
-              @click="onUseInitImageChange(!useInitImage)"
-            >
-              IMG2IMG
-            </button>
-            <button
-              :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', useMask ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-              type="button"
-              :aria-pressed="useMask"
-              :disabled="inpaintToggleDisabled"
-              :title="inpaintToggleTitle"
-              @click="onUseMaskChange(!useMask)"
-            >
-              INPAINT
-            </button>
+        <div v-if="modelAssetSelectorsReadOnly" class="quicksettings-group qs-group-owner-note">
+          <label class="label-muted">Model Tab Owner</label>
+          <div class="qs-row qs-row-wrap">
+            <span class="caption">Checkpoint, VAE, and Text Encoder are read-only here.</span>
+            <RouterLink class="btn qs-btn-outline qs-inline-btn" :to="modelAssetOwnerRoute">Open model tab</RouterLink>
           </div>
         </div>
-        <div class="quicksettings-group qs-group-models">
-          <label class="label-muted">Models</label>
-          <div class="qs-row">
-            <button class="btn qs-btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh lists">Refresh</button>
+        <fieldset class="qs-readonly-fieldset" :disabled="modelAssetSelectorsReadOnly">
+          <QuickSettingsChroma
+            :checkpoint="effectiveCheckpoint"
+            :checkpoints="filteredModelTitles"
+            :vae="store.currentVae"
+            :vae-choices="filteredVaeChoices"
+            :text-encoder="primaryTextEncoder"
+            :text-encoder-choices="filteredTextEncoderChoices"
+            :show-text-encoder="store.isModelCoreOnly(effectiveCheckpoint)"
+            @update:checkpoint="onModelChange"
+            @update:vae="onVaeChange"
+            @update:textEncoder="onPrimaryTextEncoderChange"
+            @addCheckpointPath="onAddCheckpointPath"
+            @addVaePath="onAddVaePath"
+            @addTencPath="onAddTencPath"
+            @showMetadata="onShowMetadata"
+          />
+          <div v-if="canShowModeToggles" class="quicksettings-group qs-group-mode-toggle">
+            <label class="label-muted">Mode</label>
+            <div class="qs-row">
+              <button
+                :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', useInitImage ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                type="button"
+                :aria-pressed="useInitImage"
+                @click="onUseInitImageChange(!useInitImage)"
+              >
+                IMG2IMG
+              </button>
+              <button
+                :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', useMask ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                type="button"
+                :aria-pressed="useMask"
+                :disabled="inpaintToggleDisabled"
+                :title="inpaintToggleTitle"
+                @click="onUseMaskChange(!useMask)"
+              >
+                INPAINT
+              </button>
+            </div>
           </div>
-        </div>
+          <div class="quicksettings-group qs-group-models">
+            <label class="label-muted">Models</label>
+            <div class="qs-row">
+              <button class="btn qs-btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh lists">Refresh</button>
+            </div>
+          </div>
+        </fieldset>
       </template>
 
       <!-- LTX quicksettings -->
       <template v-else-if="activeFamily === 'ltx2'">
-        <div class="quicksettings-group qs-group-mode-toggle">
-          <label class="label-muted">Mode</label>
-          <div class="qs-row">
-            <button
-              :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', activeLtxMode === 'txt2vid' ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-              type="button"
-              :disabled="ltxQuicksettingsDisabled"
-              :title="ltxModeToggleTitle"
-              :aria-pressed="activeLtxMode === 'txt2vid'"
-              @click="onLtxModeChange('txt2vid')"
-            >
-              TXT2VID
-            </button>
-            <button
-              :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', activeLtxMode === 'img2vid' ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-              type="button"
-              :disabled="ltxQuicksettingsDisabled"
-              :title="ltxModeToggleTitle"
-              :aria-pressed="activeLtxMode === 'img2vid'"
-              @click="onLtxModeChange('img2vid')"
-            >
-              IMG2VID
-            </button>
+        <div v-if="modelAssetSelectorsReadOnly" class="quicksettings-group qs-group-owner-note">
+          <label class="label-muted">Model Tab Owner</label>
+          <div class="qs-row qs-row-wrap">
+            <span class="caption">Checkpoint, VAE, and Text Encoder are read-only here.</span>
+            <RouterLink class="btn qs-btn-outline qs-inline-btn" :to="modelAssetOwnerRoute">Open model tab</RouterLink>
           </div>
         </div>
-        <QuickSettingsBase
-          :checkpoint="effectiveCheckpoint"
-          :checkpoints="filteredModelTitles"
-          :vae="effectiveVae"
-          :vae-choices="filteredVaeChoices"
-          :text-encoder="primaryTextEncoder"
-          :text-encoder-choices="filteredTextEncoderChoices"
-          text-encoder-automatic-label="Select text encoder"
-          :show-text-encoder="true"
-          :show-text-encoder-actions="true"
-          :disabled="ltxQuicksettingsDisabled"
-          @update:checkpoint="onModelChange"
-          @update:vae="onVaeChange"
-          @update:textEncoder="onPrimaryTextEncoderChange"
-          @addCheckpointPath="onAddCheckpointPath"
-          @addVaePath="onAddVaePath"
-          @addTencPath="onAddTencPath"
-          @showMetadata="onShowMetadata"
-        />
-        <div v-if="ltxRouteHydrating" class="caption">Loading LTX tab settings...</div>
-        <div class="quicksettings-group qs-group-models">
-          <label class="label-muted">Models</label>
-          <div class="qs-row">
-            <button
-              class="btn qs-btn-secondary qs-refresh-btn"
-              type="button"
-              :disabled="isLoadingQuicksettings || ltxQuicksettingsDisabled"
-              :title="ltxRefreshTitle"
-              @click="refreshAll"
-            >
-              Refresh
-            </button>
+        <fieldset class="qs-readonly-fieldset" :disabled="modelAssetSelectorsReadOnly">
+          <div class="quicksettings-group qs-group-mode-toggle">
+            <label class="label-muted">Mode</label>
+            <div class="qs-row">
+              <button
+                :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', activeLtxMode === 'txt2vid' ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                type="button"
+                :disabled="ltxQuicksettingsDisabled"
+                :title="ltxModeToggleTitle"
+                :aria-pressed="activeLtxMode === 'txt2vid'"
+                @click="onLtxModeChange('txt2vid')"
+              >
+                TXT2VID
+              </button>
+              <button
+                :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', activeLtxMode === 'img2vid' ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                type="button"
+                :disabled="ltxQuicksettingsDisabled"
+                :title="ltxModeToggleTitle"
+                :aria-pressed="activeLtxMode === 'img2vid'"
+                @click="onLtxModeChange('img2vid')"
+              >
+                IMG2VID
+              </button>
+            </div>
           </div>
-        </div>
+          <QuickSettingsBase
+            :checkpoint="effectiveCheckpoint"
+            :checkpoints="filteredModelTitles"
+            :vae="effectiveVae"
+            :vae-choices="filteredVaeChoices"
+            :text-encoder="primaryTextEncoder"
+            :text-encoder-choices="filteredTextEncoderChoices"
+            text-encoder-automatic-label="Select text encoder"
+            :show-text-encoder="true"
+            :show-text-encoder-actions="true"
+            :disabled="ltxQuicksettingsDisabled"
+            @update:checkpoint="onModelChange"
+            @update:vae="onVaeChange"
+            @update:textEncoder="onPrimaryTextEncoderChange"
+            @addCheckpointPath="onAddCheckpointPath"
+            @addVaePath="onAddVaePath"
+            @addTencPath="onAddTencPath"
+            @showMetadata="onShowMetadata"
+          />
+          <div v-if="ltxRouteHydrating" class="caption">Loading LTX tab settings...</div>
+          <div class="quicksettings-group qs-group-models">
+            <label class="label-muted">Models</label>
+            <div class="qs-row">
+              <button
+                class="btn qs-btn-secondary qs-refresh-btn"
+                type="button"
+                :disabled="isLoadingQuicksettings || ltxQuicksettingsDisabled"
+                :title="ltxRefreshTitle"
+                @click="refreshAll"
+              >
+                Refresh
+              </button>
+            </div>
+          </div>
+        </fieldset>
       </template>
 
       <!-- Default (SD15/SDXL) quicksettings -->
       <template v-else>
-        <QuickSettingsBase
-          :checkpoint="effectiveCheckpoint"
-          :checkpoints="filteredModelTitles"
-          :vae="store.currentVae"
-          :vae-choices="filteredVaeChoices"
-          :text-encoder="primaryTextEncoder"
-          :text-encoder-choices="filteredTextEncoderChoices"
-          text-encoder-automatic-label="Built-in"
-          :show-text-encoder="activeFamily !== 'sd15' && activeFamily !== 'sdxl'"
-          @update:checkpoint="onModelChange"
-          @update:vae="onVaeChange"
-          @update:textEncoder="onPrimaryTextEncoderChange"
-          @addCheckpointPath="onAddCheckpointPath"
-          @addVaePath="onAddVaePath"
-          @showMetadata="onShowMetadata"
-        />
-        <div v-if="canShowModeToggles" class="quicksettings-group qs-group-mode-toggle">
-          <label class="label-muted">Mode</label>
-          <div class="qs-row">
-            <button
-              :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', useInitImage ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-              type="button"
-              :aria-pressed="useInitImage"
-              @click="onUseInitImageChange(!useInitImage)"
-            >
-              IMG2IMG
-            </button>
-            <button
-              :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', useMask ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-              type="button"
-              :aria-pressed="useMask"
-              :disabled="inpaintToggleDisabled"
-              :title="inpaintToggleTitle"
-              @click="onUseMaskChange(!useMask)"
-            >
-              INPAINT
-            </button>
-            <button
-              v-if="canShowSupirToggle"
-              :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', supirEnabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
-              type="button"
-              :aria-pressed="supirEnabled"
-              :disabled="supirToggleDisabled"
-              :title="supirToggleTitle"
-              @click="onSupirModeChange(!supirEnabled)"
-            >
-              SUPIR
-            </button>
+        <div v-if="modelAssetSelectorsReadOnly" class="quicksettings-group qs-group-owner-note">
+          <label class="label-muted">Model Tab Owner</label>
+          <div class="qs-row qs-row-wrap">
+            <span class="caption">Checkpoint, VAE, and Text Encoder are read-only here.</span>
+            <RouterLink class="btn qs-btn-outline qs-inline-btn" :to="modelAssetOwnerRoute">Open model tab</RouterLink>
           </div>
         </div>
-        <div class="quicksettings-group qs-group-models">
-          <label class="label-muted">Models</label>
-          <div class="qs-row">
-            <button class="btn qs-btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh lists">Refresh</button>
+        <fieldset class="qs-readonly-fieldset" :disabled="modelAssetSelectorsReadOnly">
+          <QuickSettingsBase
+            :checkpoint="effectiveCheckpoint"
+            :checkpoints="filteredModelTitles"
+            :vae="store.currentVae"
+            :vae-choices="filteredVaeChoices"
+            :text-encoder="primaryTextEncoder"
+            :text-encoder-choices="filteredTextEncoderChoices"
+            text-encoder-automatic-label="Built-in"
+            :show-text-encoder="activeFamily !== 'sd15' && activeFamily !== 'sdxl'"
+            @update:checkpoint="onModelChange"
+            @update:vae="onVaeChange"
+            @update:textEncoder="onPrimaryTextEncoderChange"
+            @addCheckpointPath="onAddCheckpointPath"
+            @addVaePath="onAddVaePath"
+            @showMetadata="onShowMetadata"
+          />
+          <div v-if="canShowModeToggles" class="quicksettings-group qs-group-mode-toggle">
+            <label class="label-muted">Mode</label>
+            <div class="qs-row">
+              <button
+                :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', useInitImage ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                type="button"
+                :aria-pressed="useInitImage"
+                @click="onUseInitImageChange(!useInitImage)"
+              >
+                IMG2IMG
+              </button>
+              <button
+                :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', useMask ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                type="button"
+                :aria-pressed="useMask"
+                :disabled="inpaintToggleDisabled"
+                :title="inpaintToggleTitle"
+                @click="onUseMaskChange(!useMask)"
+              >
+                INPAINT
+              </button>
+              <button
+                v-if="canShowSupirToggle"
+                :class="['btn', 'qs-toggle-btn', 'qs-toggle-btn--sm', supirEnabled ? 'qs-toggle-btn--on' : 'qs-toggle-btn--off']"
+                type="button"
+                :aria-pressed="supirEnabled"
+                :disabled="supirToggleDisabled"
+                :title="supirToggleTitle"
+                @click="onSupirModeChange(!supirEnabled)"
+              >
+                SUPIR
+              </button>
+            </div>
           </div>
-        </div>
+          <div class="quicksettings-group qs-group-models">
+            <label class="label-muted">Models</label>
+            <div class="qs-row">
+              <button class="btn qs-btn-secondary qs-refresh-btn" type="button" @click="refreshAll" title="Refresh lists">Refresh</button>
+            </div>
+          </div>
+        </fieldset>
       </template>
     </div>
 
@@ -554,7 +612,7 @@ import {
 } from '../api/client'
 import type { InventoryResponse, ModelInfo } from '../api/types'
 import { isGenerationRunningForTab } from '../composables/useGeneration'
-import { isLtxGenerationRunningForTab, readPersistedLtxResumeModeForTab } from '../composables/useLtxVideoGeneration'
+import { isLtxGenerationRunningForTab } from '../composables/useLtxVideoGeneration'
 import { useResultsCard } from '../composables/useResultsCard'
 import { useSupirDiagnostics, resolveSupirSelectionState } from '../composables/useSupirDiagnostics'
 import {
@@ -563,6 +621,7 @@ import {
   tabFamilyFromSemanticEngine,
   type TabFamily,
 } from '../utils/engine_taxonomy'
+import { buildUseInitImagePatch } from '../utils/image_params'
 import { filterModelTitlesForFamily, enginePrefixForFamily } from '../utils/model_family_filters'
 import QuickSettingsBase from './quicksettings/QuickSettingsBase.vue'
 import QuickSettingsPerf from './quicksettings/QuickSettingsPerf.vue'
@@ -672,7 +731,7 @@ function currentTab(): UiPresetTab | null {
       if (!ltxTab) return null
       const explicit = String(ltxTab.params.mode || '').trim().toLowerCase()
       if (explicit === 'img2vid' || explicit === 'txt2vid') return explicit
-      return ltxTab.params.useInitImage ? 'img2vid' : 'txt2vid'
+      return 'txt2vid'
     }
     const imageTab = asImageTab(modelTab)
     if (imageTab) {
@@ -692,6 +751,36 @@ const resolvedPresetTab = computed<UiPresetTab | null>(() => currentTab())
 
 const routeTabId = computed(() => String(route.params.tabId || ''))
 const isModelTabRoute = computed(() => route.path.startsWith('/models/') && Boolean(routeTabId.value))
+const modelAssetSelectorsReadOnly = computed(() => !isModelTabRoute.value)
+function tabUpdatedAtMs(tab: { meta?: { updatedAt?: string } }): number {
+  const parsed = Date.parse(String(tab.meta?.updatedAt || ''))
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+const modelAssetOwnerTab = computed(() => {
+  const current = activeModelTab.value
+  if (current?.id && normalizeTabFamily(current.type) === activeFamily.value) {
+    return current
+  }
+  const active = tabsStore.activeTab
+  if (active?.id && normalizeTabFamily(active.type) === activeFamily.value) {
+    return active
+  }
+  let latestCompatible: (typeof tabsStore.tabs)[number] | null = null
+  for (const tab of tabsStore.tabs) {
+    if (normalizeTabFamily(tab.type) !== activeFamily.value) continue
+    if (!latestCompatible || tabUpdatedAtMs(tab) > tabUpdatedAtMs(latestCompatible)) {
+      latestCompatible = tab
+    }
+  }
+  return latestCompatible
+})
+
+const modelAssetOwnerRoute = computed(() => {
+  const owner = modelAssetOwnerTab.value
+  if (owner?.id) return `/models/${owner.id}`
+  return '/models'
+})
 const activeModelTab = computed(() => {
   if (!isModelTabRoute.value) return null
   const id = routeTabId.value
@@ -1275,9 +1364,7 @@ const activeLtxMode = computed<LtxGenerationMode>(() => {
   const tab = activeLtxTab.value
   const explicit = String(tab?.params.mode || '').trim().toLowerCase()
   if (explicit === 'img2vid' || explicit === 'txt2vid') return explicit
-  if (tab?.params.useInitImage) return 'img2vid'
-  const persistedMode = activeLtxRouteTabId.value ? readPersistedLtxResumeModeForTab(activeLtxRouteTabId.value) : null
-  return persistedMode === 'img2vid' ? 'img2vid' : 'txt2vid'
+  return 'txt2vid'
 })
 const activeImageSurface = computed(() => {
   const tab = activeImageTab.value
@@ -1792,8 +1879,16 @@ function toastModelTabStillLoading(): void {
   qsToast('Model tab settings are still loading.')
 }
 
+function toastModelAssetOwnerRequired(): void {
+  qsToast('Checkpoint, VAE, and Text Encoder are read-only here. Open a model tab to edit them.')
+}
+
 async function onModelChange(value: string): Promise<void> {
   try {
+    if (!isModelTabRoute.value) {
+      toastModelAssetOwnerRequired()
+      return
+    }
     if (isModelTabRoute.value) {
       if (activeFamily.value === 'ltx2') {
         const ltxTab = activeLtxTab.value
@@ -1812,7 +1907,6 @@ async function onModelChange(value: string): Promise<void> {
       await updateImageTabParams(tab.id, { checkpoint: String(value || '') })
       return
     }
-    await store.setModel(value)
   } catch (error) {
     toastQuicksettingsError(error)
   }
@@ -1820,7 +1914,11 @@ async function onModelChange(value: string): Promise<void> {
 
 async function onVaeChange(value: string): Promise<void> {
   try {
-    if (isModelTabRoute.value && !activeModelTab.value) {
+    if (!isModelTabRoute.value) {
+      toastModelAssetOwnerRequired()
+      return
+    }
+    if (!activeModelTab.value) {
       toastModelTabStillLoading()
       return
     }
@@ -1845,11 +1943,8 @@ async function onLtxModeChange(value: LtxGenerationMode): Promise<void> {
     const tab = activeLtxTab.value
     if (!tab) return
     const nextMode: LtxGenerationMode = value === 'img2vid' ? 'img2vid' : 'txt2vid'
-    if (activeLtxMode.value === nextMode && Boolean(tab.params.useInitImage) === (nextMode === 'img2vid')) return
-    await updateLtxTabParams(tab.id, {
-      mode: nextMode,
-      useInitImage: nextMode === 'img2vid',
-    })
+    if (activeLtxMode.value === nextMode) return
+    await updateLtxTabParams(tab.id, { mode: nextMode })
   } catch (error) {
     toastQuicksettingsError(error)
   }
@@ -1859,14 +1954,7 @@ async function onUseInitImageChange(value: boolean): Promise<void> {
   try {
     const tab = activeImageTab.value
     if (!tab) return
-    const patch: Partial<ImageBaseParams> = { useInitImage: Boolean(value) }
-    if (!value) {
-      patch.initImageData = ''
-      patch.initImageName = ''
-      patch.useMask = false
-      patch.maskImageData = ''
-      patch.maskImageName = ''
-    }
+    const patch: Partial<ImageBaseParams> = { ...buildUseInitImagePatch(Boolean(value)) }
     await updateImageTabParams(tab.id, patch)
   } catch (error) {
     toastQuicksettingsError(error)
@@ -1921,22 +2009,18 @@ async function onSupirModeChange(value: boolean): Promise<void> {
 }
 
 async function updatePrefixedTextEncoders(familyPrefix: 'flux1' | 'flux2', labels: string[]): Promise<void> {
+  if (!isModelTabRoute.value) {
+    throw new Error('Checkpoint, VAE, and Text Encoder are read-only here. Open a model tab to edit them.')
+  }
   const labelPrefix = `${familyPrefix}/`
   const normalizedLabels = labels
     .map((label) => String(label || '').trim())
     .filter((label, index, array) => label.startsWith(labelPrefix) && label.length > 0 && array.indexOf(label) === index)
   const tab = activeImageTab.value
-  if (isModelTabRoute.value && !tab) {
+  if (!tab) {
     throw new Error('Model tab settings are still loading.')
   }
-  if (tab) {
-    await updateImageTabParams(tab.id, { textEncoders: normalizedLabels })
-    return
-  }
-  const all = store.currentTextEncoders.slice()
-  const other = all.filter((label: string) => !String(label || '').startsWith(labelPrefix))
-  const next = [...other, ...normalizedLabels]
-  await store.setTextEncoders(next)
+  await updateImageTabParams(tab.id, { textEncoders: normalizedLabels })
 }
 
 async function updateFlux1TextEncoders(primary: string, secondary: string): Promise<void> {
@@ -1954,6 +2038,10 @@ async function updateFlux2TextEncoder(value: string): Promise<void> {
 }
 
 function onPrimaryTextEncoderChange(value: string): void {
+  if (!isModelTabRoute.value) {
+    toastModelAssetOwnerRequired()
+    return
+  }
   const fam = activeFamily.value
   if (fam === 'flux1') {
     const primary = value || ''
@@ -1968,39 +2056,31 @@ function onPrimaryTextEncoderChange(value: string): void {
   } else if (fam === 'ltx2') {
     const tab = activeLtxTab.value
     const payload = String(value || '').trim()
-    if (isModelTabRoute.value) {
-      if (!tab) {
-        toastModelTabStillLoading()
-        return
-      }
-      updateLtxTabParams(tab.id, { textEncoder: payload }).catch((error: unknown) => {
-        qsToast(error instanceof Error ? error.message : String(error))
-      })
+    if (!tab) {
+      toastModelTabStillLoading()
       return
     }
-    store.setTextEncoders(payload ? [payload] : []).catch((error: unknown) => {
+    updateLtxTabParams(tab.id, { textEncoder: payload }).catch((error: unknown) => {
       qsToast(error instanceof Error ? error.message : String(error))
     })
   } else {
     const tab = activeImageTab.value
     const payload = value ? [value] : []
-    if (isModelTabRoute.value && !tab) {
+    if (!tab) {
       toastModelTabStillLoading()
       return
     }
-    if (tab) {
-      updateImageTabParams(tab.id, { textEncoders: payload }).catch((error: unknown) => {
-        qsToast(error instanceof Error ? error.message : String(error))
-      })
-      return
-    }
-    store.setTextEncoders(payload).catch((error: unknown) => {
+    updateImageTabParams(tab.id, { textEncoders: payload }).catch((error: unknown) => {
       qsToast(error instanceof Error ? error.message : String(error))
     })
   }
 }
 
 function onSecondaryTextEncoderChange(value: string): void {
+  if (!isModelTabRoute.value) {
+    toastModelAssetOwnerRequired()
+    return
+  }
   const fam = activeFamily.value
   if (fam !== 'flux1') return
   const primary = flux1TextEncoderPrimary.value || ''

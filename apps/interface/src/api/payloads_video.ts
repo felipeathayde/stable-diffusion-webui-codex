@@ -11,25 +11,26 @@ Defines the strict API payload schemas and provides helpers that normalize UI in
 handling unset sentinels and producing backend-ready payloads for `/api/*` requests with canonical WAN video keys (including `device` and `settings_revision`).
 Img2vid payload builders emit no-stretch guide controls (optional `img2vid_image_scale` + crop offsets) with fail-loud validation, and WAN scheduler fields are enforced as exact canonical `simple`.
 
-	Symbols (top-level; keep in sync; no ghosts):
-	- `WanTxt2VidPayloadSchema` (const): Zod schema for WAN `/api/txt2vid` payload.
-	- `WanImg2VidPayloadSchema` (const): Zod schema for WAN `/api/img2vid` payload.
-	- `WanTxt2VidPayload` (type): Zod-inferred payload type for WAN `/api/txt2vid`.
-	- `WanImg2VidPayload` (type): Zod-inferred payload type for WAN `/api/img2vid`.
-	- `WanStageLoraInput` (interface): UI-friendly stage LoRA entry (`sha` + optional `weight`) mapped to stage `loras[]`.
-	- `WanStageInput` (interface): UI-friendly stage params (high/low) that map to WAN stage overrides in payload.
-	- `WanVideoOutputInput` (interface): Output options (format, pix_fmt, CRF, loop, pingpong, return-frames) mapped into payload; save flags are backend-owned defaults.
+Symbols (top-level; keep in sync; no ghosts):
+- `WanTxt2VidPayloadSchema` (const): Zod schema for WAN `/api/txt2vid` payload.
+- `WanImg2VidPayloadSchema` (const): Zod schema for WAN `/api/img2vid` payload.
+- `WanTxt2VidPayload` (type): Zod-inferred payload type for WAN `/api/txt2vid`.
+- `WanImg2VidPayload` (type): Zod-inferred payload type for WAN `/api/img2vid`.
+- `WanStageLoraInput` (interface): UI-friendly stage LoRA entry (`sha` + optional `weight`) mapped to stage `loras[]`.
+- `WanHighStageInput` (interface): UI-friendly WAN high-stage override input (model/Lora/flow only) mapped to `wan_high.*`.
+- `WanStageInput` (interface): UI-friendly low-stage params that map to WAN stage overrides in payload.
+- `WanVideoOutputInput` (interface): Output options (format, pix_fmt, CRF, loop, pingpong, return-frames) mapped into payload; save flags are backend-owned defaults.
 - `WanInterpolationInput` (interface): Interpolation target FPS input (`0`=off, values above base FPS enable backend interpolation).
 - `WanVideoUpscalingInput` (interface): Optional SeedVR2 upscaling input mapped to backend `video_upscaling`.
 - `WanAssetsInput` (interface): WAN asset selection (metadata/text encoder/VAE) used to fill payload fields.
-- `WanVideoCommonInput` (interface): Shared input fields for txt2vid/img2vid (dims, steps, seed, stage params, assets).
+- `WanVideoCommonInput` (interface): Shared input fields for txt2vid/img2vid (dims, top-level WAN core owners, stage params, assets).
 - `WanImg2VidInput` (interface): Img2vid-specific input extending common WAN fields with temporal-mode controls (`solo|sliding|svi2|svi2_pro`) and no-stretch guide controls (`imageScale` + crop offsets).
 - `normalizeDevice` (function): Validates/normalizes device input into the backend enum.
 - `snapWanDim` (function): Snaps WAN width/height to a multiple of 16 (rounded up; Diffusers parity).
 - `normalizeWanFrameCount` (function): Clamps/snap-normalizes WAN frame counts into the `4n+1` domain.
 - `normalizeAttentionMode` (function): Normalizes attention mode input to `global|sliding`.
 - `requireCanonicalWanScheduler` (function): Enforces exact canonical WAN scheduler value `simple` for WAN scheduler payload fields.
-- `stageToPayload` (function): Converts a `WanStageInput` into the backend stage override object with required canonical scheduler fields.
+- `stageToPayload` (function): Converts a `WanStageInput` or `WanHighStageInput` into the backend stage override object, optionally omitting high-stage core fields now owned by the top-level WAN request.
 - `isUnsetSentinel` (function): Detects UI sentinel values (e.g., “Automatic”/“Built-in”) that must not be sent as real asset paths.
 - `addWanAssets` (function): Injects selected WAN assets into the payload (skips unset/empty values).
 - `addWanOutput` (function): Injects output-related fields into the payload.
@@ -131,6 +132,23 @@ const VideoUpscalingSchema = z
     }
   })
 
+const WanHighStageSchema = z
+  .object({
+    model_sha: Sha256Schema,
+    loras: z
+      .array(
+        z
+          .object({
+            sha: Sha256Schema,
+            weight: z.number().finite().optional(),
+          })
+          .strict(),
+      )
+      .default([]),
+    flow_shift: z.number().optional(),
+  })
+  .strict()
+
 const WanStageSchema = z
   .object({
     model_sha: Sha256Schema,
@@ -172,7 +190,7 @@ const CommonWanVideoPayloadSchema = z
     video_interpolation: VideoInterpolationSchema.optional(),
     video_upscaling: VideoUpscalingSchema.optional(),
 
-    wan_high: WanStageSchema.optional(),
+    wan_high: WanHighStageSchema.optional(),
     wan_low: WanStageSchema.optional(),
     wan_format: WanFormatEnum.optional(),
     wan_metadata_repo: RepoIdSchema,
@@ -327,9 +345,13 @@ export const WanImg2VidPayloadSchema = CommonWanVideoPayloadSchema.extend({
 export type WanImg2VidPayload = z.infer<typeof WanImg2VidPayloadSchema>
 
 
-export interface WanStageInput {
+export interface WanHighStageInput {
   loras?: WanStageLoraInput[]
   modelSha: string
+  flowShift?: number
+}
+
+export interface WanStageInput extends WanHighStageInput {
   prompt: string
   negativePrompt: string
   sampler: string
@@ -337,7 +359,6 @@ export interface WanStageInput {
   steps: number
   cfgScale: number
   seed: number
-  flowShift?: number
 }
 
 export interface WanStageLoraInput {
@@ -385,7 +406,14 @@ export interface WanVideoCommonInput {
   height: number
   fps: number
   frames: number
-  high: WanStageInput
+  prompt: string
+  negativePrompt: string
+  sampler: string
+  scheduler: string
+  steps: number
+  cfgScale: number
+  seed: number
+  high: WanHighStageInput
   low: WanStageInput
   attentionMode: 'global' | 'sliding'
   format: 'auto' | 'diffusers' | 'gguf'
@@ -501,7 +529,10 @@ function requireCanonicalWanScheduler(rawValue: unknown, fieldName: string): typ
   return WAN_CANONICAL_SCHEDULER
 }
 
-function stageToPayload(stage: WanStageInput): Record<string, unknown> {
+function stageToPayload(
+  stage: WanStageInput | WanHighStageInput,
+  options?: { includeCoreFields?: boolean },
+): Record<string, unknown> {
   const modelSha = String(stage.modelSha || '').trim().toLowerCase()
   if (!modelSha) {
     throw new Error('WAN stage requires model_sha (sha256)')
@@ -509,28 +540,50 @@ function stageToPayload(stage: WanStageInput): Record<string, unknown> {
   if (!/^[0-9a-f]{64}$/.test(modelSha)) {
     throw new Error(`WAN stage model_sha must be sha256 (64 lowercase hex), got '${stage.modelSha}'`)
   }
-  const payload: Record<string, unknown> = {
-    model_sha: modelSha,
-    steps: stage.steps,
-    cfg_scale: stage.cfgScale,
-    seed: stage.seed,
+  const payload: Record<string, unknown> = { model_sha: modelSha }
+  if (options?.includeCoreFields === false) {
+    const rawLoras = Array.isArray(stage.loras) ? stage.loras : []
+    const normalizedLoras = rawLoras.map((lora, index) => {
+      const loraSha = String(lora?.sha || '').trim().toLowerCase()
+      if (!loraSha) {
+        throw new Error(`WAN stage loras[${index}].sha is required`)
+      }
+      if (!/^[0-9a-f]{64}$/.test(loraSha)) {
+        throw new Error(`WAN stage loras[${index}].sha must be sha256 (64 lowercase hex), got '${lora?.sha}'`)
+      }
+      const normalized: { sha: string; weight?: number } = { sha: loraSha }
+      if (lora?.weight !== undefined) {
+        if (typeof lora.weight !== 'number' || !Number.isFinite(lora.weight)) {
+          throw new Error(`WAN stage loras[${index}].weight must be a finite number`)
+        }
+        normalized.weight = lora.weight
+      }
+      return normalized
+    })
+    payload.loras = normalizedLoras
+    if (typeof stage.flowShift === 'number') payload.flow_shift = stage.flowShift
+    return payload
   }
-  const prompt = String(stage.prompt || '').trim()
+  const fullStage = stage as WanStageInput
+  payload.steps = fullStage.steps
+  payload.cfg_scale = fullStage.cfgScale
+  payload.seed = fullStage.seed
+  const prompt = String(fullStage.prompt || '').trim()
   if (!prompt) {
     throw new Error('WAN stage prompt must not be empty.')
   }
   payload.prompt = prompt
-  const negativePrompt = String(stage.negativePrompt || '').trim()
+  const negativePrompt = String(fullStage.negativePrompt || '').trim()
   payload.negative_prompt = negativePrompt
-  const sampler = String(stage.sampler || '').trim()
+  const sampler = String(fullStage.sampler || '').trim()
   if (sampler) {
     if (sampler !== sampler.toLowerCase()) {
       throw new Error(`WAN sampler must be canonical lowercase, got '${sampler}'`)
     }
     payload.sampler = sampler
   }
-  payload.scheduler = requireCanonicalWanScheduler(stage.scheduler, 'WAN stage scheduler')
-  const rawLoras = Array.isArray(stage.loras) ? stage.loras : []
+  payload.scheduler = requireCanonicalWanScheduler(fullStage.scheduler, 'WAN stage scheduler')
+  const rawLoras = Array.isArray(fullStage.loras) ? fullStage.loras : []
   const normalizedLoras = rawLoras.map((lora, index) => {
     const loraSha = String(lora?.sha || '').trim().toLowerCase()
     if (!loraSha) {
@@ -555,11 +608,11 @@ function stageToPayload(stage: WanStageInput): Record<string, unknown> {
 }
 
 function resolveTopLevelPrompts(input: WanVideoCommonInput): { prompt: string; negativePrompt: string } {
-  const prompt = String(input.high.prompt || '').trim()
+  const prompt = String(input.prompt || '').trim()
   if (!prompt) {
-    throw new Error('WAN high stage prompt must not be empty.')
+    throw new Error('WAN top-level prompt must not be empty.')
   }
-  const negativePrompt = String(input.high.negativePrompt || '').trim()
+  const negativePrompt = String(input.negativePrompt || '').trim()
   return { prompt, negativePrompt }
 }
 
@@ -673,7 +726,7 @@ function addWanUpscaling(
 }
 
 export function buildWanTxt2VidPayload(input: WanVideoCommonInput): WanTxt2VidPayload {
-  const totalSteps = input.high.steps + input.low.steps
+  const totalSteps = input.steps + input.low.steps
   const width = snapWanDim(input.width)
   const height = snapWanDim(input.height)
   const frames = normalizeWanFrameCount(input.frames)
@@ -690,18 +743,18 @@ export function buildWanTxt2VidPayload(input: WanVideoCommonInput): WanTxt2VidPa
     // Use total steps to keep WAN stage schedules continuous (GGUF runtime) and to avoid inconsistent payloads when
     // high/low stage steps differ.
     txt2vid_steps: totalSteps,
-    txt2vid_cfg_scale: input.high.cfgScale,
-    txt2vid_seed: input.high.seed,
+    txt2vid_cfg_scale: input.cfgScale,
+    txt2vid_seed: input.seed,
   }
 
-  const sampler = String(input.high.sampler || '').trim()
+  const sampler = String(input.sampler || '').trim()
   if (sampler) payload.txt2vid_sampler = sampler
-  payload.txt2vid_scheduler = requireCanonicalWanScheduler(input.high.scheduler, 'WAN txt2vid scheduler')
+  payload.txt2vid_scheduler = requireCanonicalWanScheduler(input.scheduler, 'WAN txt2vid scheduler')
   addWanOutput(payload, input.output)
   addWanInterpolation(payload, input.interpolation, input.fps)
   addWanUpscaling(payload, input.upscaling)
 
-  payload.wan_high = stageToPayload(input.high)
+  payload.wan_high = stageToPayload(input.high, { includeCoreFields: false })
   payload.wan_low = stageToPayload(input.low)
   payload.gguf_attention_mode = normalizeAttentionMode(input.attentionMode)
   if (input.format !== 'auto') payload.wan_format = input.format
@@ -711,7 +764,7 @@ export function buildWanTxt2VidPayload(input: WanVideoCommonInput): WanTxt2VidPa
 }
 
 export function buildWanImg2VidPayload(input: WanImg2VidInput): WanImg2VidPayload {
-  const totalSteps = input.high.steps + input.low.steps
+  const totalSteps = input.steps + input.low.steps
   const width = snapWanDim(input.width)
   const height = snapWanDim(input.height)
   const frames = normalizeWanFrameCount(input.frames)
@@ -728,8 +781,8 @@ export function buildWanImg2VidPayload(input: WanImg2VidInput): WanImg2VidPayloa
     // Use total steps to keep WAN stage schedules continuous (GGUF runtime) and to avoid inconsistent payloads when
     // high/low stage steps differ.
     img2vid_steps: totalSteps,
-    img2vid_cfg_scale: input.high.cfgScale,
-    img2vid_seed: input.high.seed,
+    img2vid_cfg_scale: input.cfgScale,
+    img2vid_seed: input.seed,
     img2vid_init_image: input.initImageData,
     img2vid_mode: normalizeImg2VidMode(input.img2vidMode),
     img2vid_crop_offset_x: normalizeGuideOffset(input.cropOffsetX, {
@@ -747,9 +800,9 @@ export function buildWanImg2VidPayload(input: WanImg2VidInput): WanImg2VidPayloa
     payload.img2vid_image_scale = normalizedImageScale
   }
 
-  const sampler = String(input.high.sampler || '').trim()
+  const sampler = String(input.sampler || '').trim()
   if (sampler) payload.img2vid_sampler = sampler
-  payload.img2vid_scheduler = requireCanonicalWanScheduler(input.high.scheduler, 'WAN img2vid scheduler')
+  payload.img2vid_scheduler = requireCanonicalWanScheduler(input.scheduler, 'WAN img2vid scheduler')
   const img2vidMode = normalizeImg2VidMode(input.img2vidMode)
   if (typeof input.anchorAlpha === 'number' && Number.isFinite(input.anchorAlpha)) {
     payload.img2vid_anchor_alpha = Math.min(1, Math.max(0, input.anchorAlpha))
@@ -792,7 +845,7 @@ export function buildWanImg2VidPayload(input: WanImg2VidInput): WanImg2VidPayloa
   addWanInterpolation(payload, input.interpolation, input.fps)
   addWanUpscaling(payload, input.upscaling)
 
-  payload.wan_high = stageToPayload(input.high)
+  payload.wan_high = stageToPayload(input.high, { includeCoreFields: false })
   payload.wan_low = stageToPayload(input.low)
   payload.gguf_attention_mode = normalizeAttentionMode(input.attentionMode)
   if (input.format !== 'auto') payload.wan_format = input.format

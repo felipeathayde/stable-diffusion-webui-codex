@@ -563,15 +563,12 @@ class CodexProcessingImg2Img(CodexProcessingBase):
     initial_noise_multiplier: Optional[float] = None
     latent_mask: Any = None
     resize_mode: int = 0
-    round_image_mask: bool = True
-    image_mask: Any = None
 
     def enable_hires(self, cfg: CodexHiresConfig) -> None:
         self.hires = cfg
 
     def has_mask(self) -> bool:
-        return self.mask is not None or self.image_mask is not None
+        return self.mask is not None
 
     def set_mask(self, mask: Any) -> None:
         self.mask = mask
-        self.image_mask = mask

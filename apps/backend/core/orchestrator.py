@@ -98,12 +98,7 @@ class InferenceOrchestrator:
 
         # Normalize streaming option key to a single boolean or None.
         streaming_val: bool | None = None
-        if "codex_core_streaming" in engine_options:
-            streaming_val = parse_bool_value(
-                engine_options.get("codex_core_streaming"),
-                field="engine_options.codex_core_streaming",
-            )
-        elif "core_streaming_enabled" in engine_options:
+        if "core_streaming_enabled" in engine_options:
             core_streaming_value = engine_options.get("core_streaming_enabled")
             streaming_val = (
                 None

@@ -13,13 +13,15 @@ Symbols (top-level; keep in sync; no ghosts):
 - `register_sd15` (function): Registers the SD 1.5 engine and aliases.
 - `register_sd20` (function): Registers the SD 2.x engine and aliases.
 - `register_sdxl` (function): Registers SDXL base/refiner engines and aliases.
-- `register_sd35` (function): Registers the SD 3.5 engine and aliases.
+- `register_sd35` (function): Raises `NotImplementedError` for the parked SD 3.5 placeholder.
 - `register_flux` (function): Registers the Flux engine.
 - `register_flux2` (function): Registers the FLUX.2 Klein engine.
 - `register_ltx2` (function): Registers the native backend-only LTX2 video engine.
-- `register_netflix_void` (function): Registers the native Netflix VOID vid2vid engine scaffold.
+- `register_netflix_void` (function): Raises `NotImplementedError` for the parked Netflix VOID placeholder.
+- `register_svd` (function): Raises `NotImplementedError` for the parked SVD placeholder.
 - `register_kontext` (function): Registers the Flux Kontext engine.
 - `register_chroma` (function): Registers the Chroma engine.
+- `register_hunyuan_video` (function): Raises `NotImplementedError` for the parked Hunyuan Video placeholder.
 - `register_wan22_5b` (function): Registers WAN22 GGUF 5B engine and aliases.
 - `register_wan22_14b` (function): Registers WAN22 14B engine and aliases.
 - `register_wan22_14b_animate` (function): Registers WAN22 Animate 14B engine and aliases.
@@ -60,9 +62,7 @@ def register_sdxl(*, registry: EngineRegistry | None = None, replace: bool = Fal
 
 def register_sd35(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:
     del registry, replace
-    raise NotImplementedError(
-        "Engine 'sd35' is temporarily disabled until SD3.5 conditioning/keymap port is finalized."
-    )
+    raise NotImplementedError("sd35 not yet implemented")
 
 
 def register_flux(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:
@@ -81,8 +81,8 @@ def register_ltx2(*, registry: EngineRegistry | None = None, replace: bool = Fal
 
 
 def register_netflix_void(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:
-    from apps.backend.engines.netflix_void.netflix_void import NetflixVoidEngine
-    _reg("netflix_void", NetflixVoidEngine, registry=registry, replace=replace, aliases=())
+    del registry, replace
+    raise NotImplementedError("netflix_void not yet implemented")
 
 
 def register_kontext(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:
@@ -102,13 +102,13 @@ def register_chroma(*, registry: EngineRegistry | None = None, replace: bool = F
 
 
 def register_svd(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:  # optional
-    from .video.svd.engine import SvdEngine  # type: ignore
-    _reg("svd", SvdEngine, registry=registry, replace=replace)
+    del registry, replace
+    raise NotImplementedError("svd not yet implemented")
 
 
 def register_hunyuan_video(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:  # optional
-    from .video.hunyuan.engine import HunyuanVideoEngine  # type: ignore
-    _reg("hunyuan_video", HunyuanVideoEngine, registry=registry, replace=replace, aliases=("hunyuan",))
+    del registry, replace
+    raise NotImplementedError("hunyuan_video not yet implemented")
 
 
 def register_wan22_5b(*, registry: EngineRegistry | None = None, replace: bool = False) -> None:

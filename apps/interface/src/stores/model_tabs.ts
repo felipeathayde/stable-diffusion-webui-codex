@@ -20,8 +20,8 @@ window control (`restoreCfgSTmin`) as normalized UI state. WAN video normalizati
 backfills blank WAN stage samplers to explicit `uni-pc bh2`, and persists both scheduler/sampler backfills through the normal tab-persistence
 queue without blocking tab hydration. FLUX.2 tabs keep the truthful Klein 4B / base-4B slice contract by capping `textEncoders` to one
 `flux2/*` Qwen selector without overriding shared img2img denoise state. LTX normalization treats `mode` as the canonical owner of txt2vid/img2vid,
-persists explicit `executionProfile` state, rewrites the compatibility boolean `useInitImage` from that normalized mode, and leaves stale/blank
-profile values visible until the active checkpoint metadata or user choice resolves them truthfully without silently rewriting stored raw profile ids.
+persists explicit `executionProfile` state, and leaves stale/blank profile values visible until the active checkpoint metadata or user choice resolves
+them truthfully without silently rewriting stored raw profile ids.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `BaseTabType` (type): API tab type discriminator (from backend `ApiTab['type']`).
@@ -227,7 +227,6 @@ export interface LtxTabParams {
   checkpoint: string
   vae: string
   textEncoder: string
-  useInitImage: boolean
   initImageData: string
   initImageName: string
   videoReturnFrames: boolean
@@ -487,7 +486,6 @@ const LTX_PARAM_TOP_LEVEL_KEYS = new Set<string>([
   'checkpoint',
   'vae',
   'textEncoder',
-  'useInitImage',
   'initImageData',
   'initImageName',
   'videoReturnFrames',
@@ -621,7 +619,6 @@ function defaultParams<T extends BaseTabType>(
       checkpoint: '',
       vae: '',
       textEncoder: '',
-      useInitImage: false,
       initImageData: '',
       initImageName: '',
       videoReturnFrames: false,
@@ -811,8 +808,7 @@ function normalizeLtxParams(raw: unknown, defaults: LtxTabParams): LtxTabParams 
     if (!LTX_PARAM_TOP_LEVEL_KEYS.has(key)) continue
     ;(merged as unknown as Record<string, unknown>)[key] = value
   }
-  const fallbackMode: LtxGenerationMode = normalizeBoolean(patch.useInitImage, defaults.useInitImage) ? 'img2vid' : defaults.mode
-  merged.mode = normalizeLtxMode(patch.mode, fallbackMode)
+  merged.mode = normalizeLtxMode(patch.mode, defaults.mode)
   merged.prompt = String(merged.prompt || '')
   merged.negativePrompt = String(merged.negativePrompt || '')
   merged.width = normalizePositiveInt(merged.width, defaults.width)
@@ -826,7 +822,6 @@ function normalizeLtxParams(raw: unknown, defaults: LtxTabParams): LtxTabParams 
   merged.checkpoint = String(merged.checkpoint || '').trim()
   merged.vae = String(merged.vae || '').trim()
   merged.textEncoder = String(merged.textEncoder || '').trim()
-  merged.useInitImage = merged.mode === 'img2vid'
   merged.initImageData = String(merged.initImageData || '')
   merged.initImageName = String(merged.initImageName || '')
   merged.videoReturnFrames = normalizeBoolean(merged.videoReturnFrames, defaults.videoReturnFrames)

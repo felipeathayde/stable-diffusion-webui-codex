@@ -11,8 +11,8 @@ Runs the selected video execution path (active WAN22 Diffusers/GGUF lanes plus t
 truthful LTX2 `executionProfile` stage flow (`distilled` and `one_stage` execute the one-stage native lane; `two_stage`
 runs `stage1_sampling -> latent_upsample -> stage2_refine -> decode`), applies shared SeedVR2
 upscaling/interpolation stages when requested, exports the resulting video, and yields progress/result events.
-WAN22 Diffusers stage execution requires `extras.wan_high.prompt` (non-empty); stage negative uses explicit value when
-provided and falls back to request negative only when missing. The native LTX2 branch consumes a local
+WAN22 Diffusers high-stage execution reads prompt/negative from the top-level request owner while `extras.wan_high`
+remains selector-only for stage assets/LoRAs. The native LTX2 branch consumes a local
 `Ltx2RunResult` (`frames + AudioExportAsset + metadata`) and owns cleanup of generated temp audio after export.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -779,16 +779,10 @@ def run_txt2vid(
     extras = dict(plan.extras)
     wan_high_cfg = extras.get("wan_high")
     wan_hi_opts = WanStageOptions.from_mapping(wan_high_cfg) if isinstance(wan_high_cfg, dict) else None
-    if wan_hi_opts is None or wan_hi_opts.prompt is None:
-        raise RuntimeError("txt2vid requires extras.wan_high.prompt to be set.")
-    prompt_text = str(wan_hi_opts.prompt).strip()
+    prompt_text = str(getattr(request, "prompt", None) or "").strip()
     if not prompt_text:
-        raise RuntimeError("txt2vid requires a non-empty high-stage prompt.")
-    negative_prompt_text = (
-        str(wan_hi_opts.negative_prompt).strip()
-        if wan_hi_opts and wan_hi_opts.negative_prompt is not None
-        else str(getattr(request, "negative_prompt", None) or "").strip()
-    )
+        raise RuntimeError("txt2vid requires a non-empty request.prompt.")
+    negative_prompt_text = str(getattr(request, "negative_prompt", None) or "").strip()
     if wan_hi_opts and wan_hi_opts.loras:
         apply_wan_stage_loras(
             pipe=pipe,

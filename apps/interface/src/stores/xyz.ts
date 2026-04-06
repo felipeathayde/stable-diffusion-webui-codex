@@ -11,11 +11,13 @@ Builds parameter grid combos, enqueues jobs, starts txt2img tasks (including req
 per-cell results. Hires upscaler values are stable ids (`latent:*` / `spandrel:*`) for hires-fix wiring; hires tile prefs (fallback/min_tile) are propagated from the shared upscalers store.
 Preflight now fails loud when VAE selection is empty before queuing XYZ requests, and queued txt2img payloads reuse the shared image request contract helper so the sweep lane emits the
 same explicit checkpoint/VAE selectors (`model_sha`, `checkpoint_core_only`, `model_format`, `vae_source`), FLUX.2 guidance mode, and asset-contract-backed extras as the main image generation lane.
+The standalone `/xyz` route now pins itself to a compatible image-tab owner (active image tab, then most recently updated image tab, else a new `sdxl` tab) instead of baselining from generic active-tab state.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `Status` (type): XYZ sweep lifecycle status (`idle`/`running`/`stopped`/`error`/`done`).
 - `StopMode` (type): Stop behavior for a running sweep (`immediate` vs `after_current`).
 - `XyzJob` (interface): Internal job record for each cell (payload/task id/status/result/error).
+- `ensureBaselineImageTab` (function): Resolves the owner image tab for `/xyz` with deterministic fallback.
 - `useXyzStore` (store): Pinia store for XYZ sweeps; builds combos, runs jobs, subscribes to task SSE, and writes results into cells.
 - `enabled`/`xEnabled`/`yEnabled`/`zEnabled` (store refs): Master and per-axis toggles used by the embedded XYZ card + Run integration.
 - `XyzStore` (type): Convenience return type alias for `useXyzStore`.
@@ -31,11 +33,11 @@ import type { Txt2ImgRequest } from '../api/payloads'
 import type { GeneratedImage, TaskEvent } from '../api/types'
 import { buildExplicitImageRequestContract } from '../utils/image_request_contract'
 import { AXIS_OPTIONS, buildCombos, labelOf, parseAxisValues, type AxisParam, type AxisValue, type XyzCell } from '../utils/xyz'
-import { useModelTabsStore, type ImageBaseParams } from './model_tabs'
+import { useModelTabsStore, type ImageBaseParams, type ImageTabType, type TabByType } from './model_tabs'
 import { useEngineCapabilitiesStore } from './engine_capabilities'
 import { useQuicksettingsStore } from './quicksettings'
 import { useUpscalersStore } from './upscalers'
-import { fallbackSamplingDefaultsForTabFamily, resolveImageRequestEngineId, type TabFamily } from '../utils/engine_taxonomy'
+import { fallbackSamplingDefaultsForTabFamily, normalizeTabFamily, resolveImageRequestEngineId, type TabFamily } from '../utils/engine_taxonomy'
 
 type Status = 'idle' | 'running' | 'stopped' | 'error' | 'done'
 type StopMode = 'immediate' | 'after_current'
@@ -75,6 +77,8 @@ export const useXyzStore = defineStore('xyz', () => {
   const activeTaskId = ref<string | null>(null)
 
   let unsubscribe: (() => void) | null = null
+
+  type CompatibleImageTab = TabByType<ImageTabType>
 
   const axisKind = (param: AxisParam): 'text' | 'number' => {
     return AXIS_OPTIONS.find((o) => o.id === param)?.kind ?? 'text'
@@ -126,18 +130,54 @@ export const useXyzStore = defineStore('xyz', () => {
     stopMode.value = 'immediate'
   }
 
-  function buildBaseForm(): any {
+  function isCompatibleImageTab(tab: unknown): boolean {
+    if (!tab || typeof tab !== 'object') return false
+    const candidate = tab as { type?: unknown; params?: unknown }
+    const family = normalizeTabFamily(candidate.type)
+    if (!family || family === 'wan' || family === 'ltx2') return false
+    return Boolean(candidate.params && typeof candidate.params === 'object')
+  }
+
+  function updatedAtMs(tab: CompatibleImageTab): number {
+    const raw = String(tab.meta?.updatedAt || '')
+    const next = Date.parse(raw)
+    return Number.isFinite(next) ? next : 0
+  }
+
+  async function ensureBaselineImageTab(): Promise<CompatibleImageTab> {
     const tabs = useModelTabsStore()
+    await tabs.load()
+    const active = tabs.activeTab
+    if (active && isCompatibleImageTab(active)) {
+      tabs.setActive(active.id)
+      return active as unknown as CompatibleImageTab
+    }
+    const fallback = [...tabs.orderedTabs]
+      .filter((tab) => isCompatibleImageTab(tab))
+      .sort((left, right) => updatedAtMs(right as unknown as CompatibleImageTab) - updatedAtMs(left as unknown as CompatibleImageTab))[0] ?? null
+    if (fallback) {
+      tabs.setActive(fallback.id)
+      return fallback as unknown as CompatibleImageTab
+    }
+    const createdId = await tabs.create('sdxl')
+    const created = (tabs.tabs.find((tab) => tab.id === createdId && isCompatibleImageTab(tab)) as unknown as CompatibleImageTab | undefined) ?? null
+    if (!created) {
+      throw new Error(`Failed to create baseline image tab for /xyz: '${createdId}' not found after create.`)
+    }
+    tabs.setActive(created.id)
+    return created
+  }
+
+  function buildBaseForm(tab: CompatibleImageTab): any {
     const quick = useQuicksettingsStore()
     const caps = useEngineCapabilitiesStore()
-    const activeTab = tabs.activeTab
-    const params = activeTab?.params as ImageBaseParams | undefined
-    const tabFamily = (activeTab?.type || 'sdxl') as TabFamily
+    const params = tab.params as ImageBaseParams
+    const tabFamily = tab.type as TabFamily
     const engineKey = resolveImageRequestEngineId(tabFamily, false)
-    const checkpoint = String((params as any)?.checkpoint || '').trim()
+    const checkpoint = String(params.checkpoint || '').trim()
     const modelLabel = checkpoint || quick.currentModel
-    const textEncoders = Array.isArray((params as any)?.textEncoders)
-      ? (params as any).textEncoders
+    const textEncoders = Array.isArray(params.textEncoders)
+      ? params.textEncoders
           .map((value: unknown) => String(value || '').trim())
           .filter((value: string) => value.length > 0)
       : []
@@ -145,8 +185,9 @@ export const useXyzStore = defineStore('xyz', () => {
       modelLabel,
       engineKey,
       textEncoderLabels: textEncoders,
+      selectedVaeLabel: quick.getVaeForFamily(tabFamily),
       zimageTurbo: engineKey === 'zimage'
-        ? Boolean((params as any)?.zimageTurbo ?? true)
+        ? Boolean(params.zimageTurbo ?? true)
         : false,
       resolvers: {
         requireModelInfo: quick.requireModelInfo,
@@ -278,10 +319,16 @@ export const useXyzStore = defineStore('xyz', () => {
   }
 
   async function run(): Promise<void> {
-    const tabs = useModelTabsStore()
     const quick = useQuicksettingsStore()
-    const activeTab = tabs.activeTab
-    const params = activeTab?.params as ImageBaseParams | undefined
+    let baselineTab: CompatibleImageTab
+    try {
+      baselineTab = await ensureBaselineImageTab()
+    } catch (error) {
+      errorMessage.value = error instanceof Error ? error.message : String(error)
+      status.value = 'error'
+      return
+    }
+    const params = baselineTab.params
 
     if (!enabled.value) {
       errorMessage.value = 'Enable XYZ before running.'
@@ -327,7 +374,7 @@ export const useXyzStore = defineStore('xyz', () => {
       return
     }
     try {
-      quick.requireVaeSelection()
+      quick.requireVaeSelection(quick.getVaeForFamily(baselineTab.type))
     } catch (error) {
       errorMessage.value = error instanceof Error ? error.message : String(error)
       status.value = 'error'
@@ -348,7 +395,7 @@ export const useXyzStore = defineStore('xyz', () => {
     // Pre-build job queue with payload snapshots
     for (const [index, combo] of comboList.entries()) {
       try {
-        const form = buildBaseForm()
+        const form = buildBaseForm(baselineTab)
         if (xEnabled.value) applyAxis(form, xParam.value, combo.x)
         if (combo.y !== null && yEnabled.value) applyAxis(form, yParam.value, combo.y)
         if (combo.z !== null && zEnabled.value) applyAxis(form, zParam.value, combo.z)

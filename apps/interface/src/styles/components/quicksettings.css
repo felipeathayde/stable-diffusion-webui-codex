@@ -123,11 +123,11 @@
     padding: 0;
     border: 0;
     display: flex;
-    flex: 1 1 100%;
+    flex: 1 1 0%;
     flex-wrap: wrap;
     gap: 0.5rem 0.8rem;
     align-items: flex-end;
-    width: 100%;
+    min-width: 0;
   }
   
   .qs-pair { 

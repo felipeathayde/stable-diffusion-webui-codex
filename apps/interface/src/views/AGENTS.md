@@ -1,7 +1,7 @@
 # apps/interface/src/views Overview
 <!-- tags: frontend, views, model-tabs -->
 Date: 2025-10-28
-Last Review: 2026-04-03
+Last Review: 2026-04-07
 Status: Active
 
 ## Purpose
@@ -18,6 +18,7 @@ Status: Active
 - 2026-03-03: `Home.vue` Docs & Help reference paths now point only to repo-shipped docs under `apps/**` and root docs (`SUBSYSTEM-MAP.md`, `apps/**/AGENTS.md`), with no `.sangoi` path mentions.
 - 2026-03-06: `Home.vue` and `ModelsList.vue` tab-creation selectors include `flux2`; `PngInfo.vue` treats `flux2` tabs as path-labeled VAE consumers; `ImageModelTab.vue` persists per-tab profiles under a dedicated `flux2` key, preserves capability-driven img2img state, resolves FLUX.2 CFG/negative-prompt semantics from the selected Klein 4B vs base-4B checkpoint, keeps FLUX.2 img2img denoise truthful/visible, and gates img2img hires through shared capability + mask policy (Kontext defaults remain FLUX.1-only).
 - `PngInfo.vue` and `ImageModelTab.vue` are writers of real image-tab init images. When either seam materializes `initImageData`, it must also set `initSource.mode='img'` in the same patch so shared INPAINT gating stays truthful.
+- 2026-04-07: `WorkflowsList.vue` restore now treats sparse image snapshots as ownerful for `inpaintMode`: if a workflow snapshot omits that key (for example after backend scrub of a stale invalid value), restore must seed the type default before patching an existing compatible tab so the target tab cannot silently keep an old exact inpaint lane like `brushnet`/`fooocus_inpaint`.
 - All generation workspaces live under model tabs (`/models/:tabId`):
   - `ModelTabView.vue` mounts `VideoTabRouteView.vue` when `tab.type === 'wan' | 'ltx2'`.
   - `ModelTabView.vue` mounts `ImageModelTab.vue` when `tab.type` is `sd15|sdxl|flux1|flux2|chroma|zimage|anima`.
@@ -35,7 +36,7 @@ Status: Active
 - 2025-12-29: `VideoModelTab.vue` keeps “Video” + “Video Output” as sequential cards; the shared generic `components/video/**` shells own the card chrome while active-family controls fill the card body/header slots.
 - 2025-12-29: `VideoModelTab.vue` renders the History card above the results viewer for parity with `ImageModelTab.vue`.
 - 2025-12-31: `ImageModelTab.vue` now syncs Width/Height from the init image (auto on upload and “Send to Img2Img”, plus a manual re-sync action) and applies Kontext-friendly defaults on FLUX.1 init-image runs without overriding custom values.
-- 2026-01-29: `ImageModelTab.vue` now exposes Codex-native masked img2img (“inpaint”) controls alongside init-image img2img (mask upload + enforcement mode + full-res “Only masked” + invert/round/blur + masked-content mode); engines that reject mask/inpaint semantics keep init-image img2img but clear/hide stale mask state through backend capability gating (`supports_img2img_masking`).
+- 2026-04-06: `ImageModelTab.vue` now treats masked runtime selection as exact-engine-owned `inpaintMode`, not a generic enforcement enum. The shared inpaint card gets its options from `/api/engines/capabilities.exact_engine_inpaint_modes`, SDXL alone can surface `Fooocus Inpaint` / `BrushNet`, and unsupported exact-engine modes stay visible/blocking until the user reselects instead of being silently coerced while the existing `supports_img2img_masking` gate still decides whether mask UI exists at all.
 - 2026-02-08: `ImageModelTab.vue` no longer renders a local “Use Mask (inpaint)” toggle; IMG2IMG/INPAINT mode toggles are now owned by `QuickSettingsBar.vue`, while mask asset/enforcement controls remain in-panel when `params.useMask` is enabled.
 - 2026-01-01: `ImageModelTab.vue` now exposes per-tab `CLIP Skip` (SD15/SDXL/FLUX.1) and persists it in saved profiles; requests send `clip_skip`/`img2img_clip_skip` to the backend.
 - 2026-04-04: `ImageModelTab.vue` and `VideoModelTab.vue` now share `components/results/ResultsHistoryStrip.vue` for the thumbnail strip body; runtime-specific history persistence/details modals still stay in the owning composable/runtime helper.
@@ -105,7 +106,7 @@ Status: Active
 - 2026-03-02: `ImageModelTab.vue` no longer binds a hires-card `fallbackOnOom` toggle event; hires tile controls now expose only Tile/Overlap/Min-tile editing while preserving shared global `min_tile` preference wiring.
 - 2026-03-25: `ImageModelTab.vue` wires shared `guidanceAdvanced` + `guidanceSupport` into both native refiner cards (global + hires), keeps the generic second-pass model selector under `params.hires.swapModel`, and clears unsupported hires `swapModel` / hires-refiner state when the tab switches into img2img mode so hidden stale state cannot drift silently.
 - 2026-03-02: `ImageModelTab.vue` RUN header now shows an `XYZ` badge beside the `Generate` CTA while XYZ workflow is enabled, and Run generate label is always `Generate` (no `Generate xyz` variant); XYZ stop/cancel stays centralized in RUN card actions.
-- 2026-02-25: `VideoModelTab.vue` now passes `maskEnforcement=\"per_step_clamp\"` to the shared img2img-init card, aligning embedded defaults with Forge-engine masked semantics.
+- 2026-04-06: `VideoModelTab.vue` reference wiring to the shared img2img-init card now uses the live `inpaintMode="per_step_blend"` baseline contract for the embedded img2img card.
 - 2026-02-21: `VideoModelTab.vue` windowed `img2vid` temporal controls render inside `Temporal Loom` with compact grouped controls (`Attention Mode`, `Window Frames`, `Window Stride`, `Window Commit`, `Anchor Alpha`, `Chunk Seed Mode`), and numeric fields use shared `SliderField` + `?` hover tooltips (`HoverTooltip`).
 - 2026-02-21: `ImageModelTab.vue` now wires `Img2ImgInpaintParamsCard.vue` to the new mask editor apply/reset-notice events (`apply:maskImageData`, `notice:maskEditorReset`) and preserves existing fail-loud dimension validation on edited masks.
 - 2026-03-24: `ImageModelTab.vue` now forwards parent-owned `maskInvert` into the shared inpaint card/editor seam, normalizes the invalid `maskInvert + maskRegionSplit` pair in the shared parent-owned param path by preserving `maskInvert` and clearing `maskRegionSplit`, and treats unresolved natural init-image dims as unavailable instead of silently falling back to processing width/height.

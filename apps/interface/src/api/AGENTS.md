@@ -30,7 +30,7 @@ Status: Active
   - `asset_contracts` (base + core-only; now includes `tenc_slots`/`tenc_slot_labels` for slot-accurate requirements)
   - `engine_id_to_semantic_engine` (explicit key-space mapping; required by frontend taxonomy resolution)
   - optional `parked_exact_engines` (exact parked-placeholder ids such as `sd35` / `netflix_void` / `svd` / `hunyuan_video`; these must not also appear in runnable maps)
-  - `dependency_checks` (backend-owned readiness rows per semantic engine; strict `ready === all(check.ok)` contract)
+  - `dependency_checks` (backend-owned readiness rows per semantic engine; `ready` covers only unscoped/global rows, while mode-scoped rows such as SDXL inpaint assets stay separately evaluable through each row's `inpaint_modes`)
 - 2026-03-07: `types.ts` `EngineCapabilities` sampler/scheduler recommendation fields are `recommended_samplers` / `recommended_schedulers`.
 - 2026-03-09: `types.ts` `FamilyCapabilities` now preserves optional family-scoped sampling filters from `/api/engines/capabilities` (`supported_samplers`, `supported_schedulers`, `excluded_samplers`, `excluded_schedulers`) for frontend family-aware sampler/scheduler gating.
 - `/api/samplers` DTO is `{name,supported,default_scheduler,allowed_schedulers}`; `supported` means executable backend support and `client.ts::fetchSamplers()` filters out `supported=false` rows before UI selector use. WAN payload builders fail fast on non-canonical (uppercase) sampler inputs and reject any scheduler value other than exact canonical `simple`; emitted WAN scheduler fields remain explicit at top level (`*_scheduler`) and only on the live second-stage owner (`wan_low.scheduler`).

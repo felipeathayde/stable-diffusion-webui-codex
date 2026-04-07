@@ -1,6 +1,6 @@
 # apps/backend/core Overview
 Date: 2025-10-28
-Last Review: 2026-03-31
+Last Review: 2026-04-06
 Status: Active
 
 ## Purpose
@@ -33,7 +33,7 @@ Status: Active
 - 2026-01-02: Added standardized file header docstrings across `apps/backend/core/**` modules (doc-only change; part of rollout).
 - 2026-01-03: `apps/backend/core/__init__.py` no longer re-exports star-import facades; callers must import from specific modules (e.g. `core.requests`, `core.registry`).
 - 2026-01-06: Refreshed the `orchestrator.py` module header block to reflect the current engine-options fingerprint fields (`vae_source`/`tenc_source`) (doc-only change).
-- 2026-01-29: `Img2ImgRequest` now carries explicit mask/inpaint controls (enforcement mode + blur/invert/full-res/filled-content knobs) for Codex-native masked img2img.
+- 2026-04-06: `Img2ImgRequest` now carries explicit mask/inpaint controls under `inpaint_mode` plus the existing blur/invert/full-res/filled-content knobs for Codex-native masked img2img.
 - 2026-02-25: `Img2ImgRequest` masked defaults are now aligned with ADetailer-like behavior for UI/API parity (`inpainting_fill=1`, `inpaint_full_res_padding=32`).
 - 2026-02-03: Image request dataclasses now carry hires config via `hires` (renamed field; no alias).
 - 2026-02-09: `InferenceOrchestrator` no longer scrubs traceback chains before wrapping load/execution failures; wrapped `EngineLoadError`/`EngineExecutionError` now preserve source-frame causality for diagnostics.
@@ -54,5 +54,5 @@ Status: Active
 - 2026-02-28: `InferenceOrchestrator._purge_vram(...)` removed the optional `operations_gguf.clear_cache` import/call path; cleanup now relies on orchestrator unload + memory-manager unload/soft-empty + GC + CUDA cache release.
 - 2026-03-02: `BackendState` now tracks VAE phase progress (`vae_phase`, `vae_block_index`, `vae_block_total`) with explicit snapshot/update helpers so image use-cases can stream encode/decode block progress alongside sampling.
 - 2026-03-08: `BackendState.sampling_steps` may now be unknown (`None`) for open-ended native samplers such as `dpm adaptive`; progress consumers must treat missing totals as an honest unbounded-progress signal instead of coercing them to zero.
-- 2026-03-24: `Img2ImgRequest` now carries additive `per_step_blend_strength` (`0..1`, default `1.0`) for masked `per_step_clamp`; this is a scalar on the existing enforcement mode, not a new enum or alias surface.
+- 2026-04-06: `Img2ImgRequest` keeps additive `per_step_blend_strength` (`0..1`, default `1.0`) only for masked `inpaint_mode='per_step_blend'`; this remains a scalar on the generic branch, not a second mode owner.
 - 2026-03-31: `state.py` now tags raw sampling, VAE, and live-preview snapshots with per-run owner tokens, and `live_preview_snapshot()` is the canonical atomic preview read seam; downstream code must stop stitching together `current_image`, `id_live_preview`, and `current_image_sampling_step` by hand.

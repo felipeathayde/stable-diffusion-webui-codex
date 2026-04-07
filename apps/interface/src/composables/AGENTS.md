@@ -1,7 +1,7 @@
 # apps/interface/src/composables Overview
 <!-- tags: frontend, composables -->
 Date: 2025-12-09
-Last Review: 2026-03-30
+Last Review: 2026-04-06
 Status: Active
 
 ## Purpose
@@ -17,7 +17,7 @@ Status: Active
 - 2025-12-28: `useGeneration(tabId)` now propagates tab-scoped `batchCount`/`batchSize` into txt2img/img2img payloads (previously fixed to 1×1) and tracks `progress`/`info`/`gentimeMs` for the image-tabs Results UI.
 - 2025-12-28: `useGeneration(tabId)` now maintains a small per-tab image run history (task id + params snapshot) and exposes `loadHistory/clearHistory` so views can render a History panel.
 - 2025-12-31: FLUX.1 img2img requests from `useGeneration(tabId)` are routed to the Kontext workflow engine (canonical key `engine="flux1_kontext"`, previously `kontext`) and include `img2img_extras.tenc_sha` (no `text_encoder_override` for Flux.1; backend derives the override from sha).
-- 2026-01-29: `useGeneration(tabId)` now emits Codex-native masked img2img (“inpaint”) fields when `tab.params.useMask` is enabled (`img2img_mask_enforcement`, full-res crop/padding, invert/round/blur, masked-content mode). Engines that reject mask/inpaint semantics are blocked through backend `/api/engines/capabilities` (`supports_img2img_masking`) instead of per-view engine lists or frontend taxonomy blocklists.
+- 2026-04-06: `useGeneration(tabId)` now emits Codex-native masked img2img (“inpaint”) fields under `img2img_inpaint_mode` when `tab.params.useMask` is enabled. Engines that reject mask/inpaint semantics are still blocked through backend `/api/engines/capabilities` (`supports_img2img_masking`), while exact runtime modes come from the backend-owned exact-engine map (`fooocus_inpaint`, `brushnet` for live SDXL).
 - 2026-03-06: the image request helper now resolves FLUX.2 guidance mode from the selected Klein 4B vs base-4B checkpoint before payload assembly; `useGeneration(tabId)` consumes that resolved mode so txt2img/img2img emit exactly one matching guidance field (`cfg` / `img2img_cfg_scale` for base-4B, `distilled_cfg` / `img2img_distilled_cfg_scale` for distilled 4B), negative prompts stay suppressed only for distilled flows, and FLUX.2 img2img denoise passes through truthfully instead of being forced to `1.0`.
 - 2025-12-14: `useVideoGeneration(tabId)` encapsulates WAN `/txt2vid` + `/img2vid` generation + SSE streaming state so `WANTab.vue` stays a thin view.
 - 2025-12-16: `useVideoGeneration(tabId)` exposes WAN video task execution + export URL wiring (`/api/output/{rel_path}`) for the active WAN modes.
@@ -58,7 +58,7 @@ Status: Active
 - 2026-02-20: `useGeneration(tabId)` and `useVideoGeneration(tabId)` history entries now include optional `thumbnail` previews (`GeneratedImage`) updated during progress/result flow, enabling square thumbnail-only History cards with detail modal drill-down in views.
 - 2026-02-21: `useGeneration(tabId)` now fails loud when a non-sentinel VAE label cannot be resolved to `vae_sha` (`Selected VAE is invalid or stale`), preventing stale hidden selections from degrading into implicit built-in behavior.
 - 2026-02-22: `useGeneration(tabId)` now exposes `cancel(mode)` (task cancel API passthrough) so `RunCard` can drive the shared two-click cancel flow from image tab headers.
-- 2026-02-25: `useGeneration.ts::buildImg2ImgPayload(...)` now normalizes `img2img_mask_enforcement` via `normalizeMaskEnforcement(...)` at payload assembly time, preventing stale/invalid client values from reaching the backend contract.
+- 2026-04-06: `useGeneration.ts::buildImg2ImgPayload(...)` now emits masked runtime selection under `img2img_inpaint_mode`; stale/invalid values must already have been reset by tab normalization or they fail loud at payload assembly time.
 - 2026-02-27: `useGeneration.ts::buildImg2ImgPayload(...)` now fails loud when INPAINT is enabled but no mask is applied, preventing empty-mask submits from drifting into “unmasked img2img” behavior.
 - 2026-02-21: `useVideoGeneration(tabId)` now treats WAN prompts as stage-owned (`high.prompt/negativePrompt`, `low.prompt/negativePrompt`), blocks generation if either stage prompt is empty, snapshots both stage prompts in history, and keeps top-level API prompt compatibility by deriving mode prompt from the High stage in payload builders.
 - 2026-02-21: `useVideoGeneration(tabId)` now dispatches only `txt2vid|img2vid`; frontend `vid2vid` run preparation/dispatch and init-video file state were removed to match current backend contract exposure.
@@ -80,4 +80,4 @@ Status: Active
 - 2026-03-16: `useLtxVideoGeneration(tabId)` now blocks generation on the backend-owned `vendored_metadata` dependency row in addition to checkpoint/core-only sidecars, so the dedicated LTX path fails before the runtime hits missing local `Lightricks/LTX-2` metadata.
 - 2026-03-26: LTX dependency gating is now split truthfully: the generic `vendored_metadata` row covers only the common runtime metadata, while `two_stage` availability comes from checkpoint execution metadata and router/runtime validation that additionally require vendored `latent_upsampler` config. The composable must not synthesize `executionProfile` from legacy sampler state during hydrate or submit.
 - 2026-04-04: `useLtxVideoGeneration(tabId)` now keeps a compact per-tab LTX run history (`taskId`, summary, params snapshot, optional thumbnail/error) plus `loadHistory/clearHistory`, so the shared WAN-baseline `GenerationResultsPanel.vue` can render the same History strip/actions for LTX without reintroducing a second hand-built Results surface. Queue/stage orchestration still remains WAN-only.
-- 2026-03-25: `useGeneration.ts` now emits both `img2img_per_step_blend_strength` and `img2img_per_step_blend_steps` only for masked `per_step_clamp` runs; the payload seam owns only masked-gated emission plus non-negative integer / `[0,1]` hygiene, not effective step-window resolution.
+- 2026-04-06: `useGeneration.ts` now emits both `img2img_per_step_blend_strength` and `img2img_per_step_blend_steps` only for masked `inpaintMode='per_step_blend'`; the payload seam owns only masked-gated emission plus non-negative integer / `[0,1]` hygiene, not effective step-window resolution.

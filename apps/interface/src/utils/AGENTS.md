@@ -25,7 +25,7 @@ Status: Active
 - 2026-03-08: `engine_taxonomy.ts` fallback sampling defaults keep `sd15` on live executable defaults (`ddim`/`ddim`).
 - 2026-02-07: Updated Anima fallback sampling defaults to `euler/simple` in `engine_taxonomy.ts`.
 - 2026-02-08: Added `image_params.ts` for pure img2img/inpaint normalization helpers (`normalizeMaskEnforcement`, `normalizeInpaintingFill`, `normalizeNonNegativeInt`, `normalizeInpaintMaskToggleState`) used by `ImageModelTab.vue`.
-- 2026-02-25: `image_params.normalizeMaskEnforcement(...)` now defaults unknown values to `per_step_clamp` (Forge-engine baseline), while preserving explicit `post_blend` as legacy opt-in.
+- 2026-04-06: `image_params.parseInpaintMode(...)` is strict: it accepts only the live `inpaintMode` enum and returns `null` for stale/removed values so callers can reset or reject explicitly instead of laundering old modes.
 - 2026-03-06: `image_params.ts` now also exposes hires policy/text helpers (`resolveTextOverride`, `resolveHiresModePolicy`) used by payload/view wiring to keep prompt fallback deterministic and hires visibility/reset mask-aware for img2img.
 - 2026-04-05: `image_params.ts` now also owns `buildUseInitImagePatch(...)`, the canonical pure cleanup patch for disabling init-image mode; `QuickSettingsBar.vue` and `PngInfo.vue` must both reuse it so txt2img handoffs clear init+mask state together instead of drifting.
 - 2026-02-18: Added `img2img_resize.ts` as the canonical img2img resize-mode contract (`just_resize`, `crop_and_resize`, `resize_and_fill`, `just_resize_latent_upscale`, `upscaler`) with a shared normalizer for store/view/composable wiring.

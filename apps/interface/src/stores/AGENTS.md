@@ -1,14 +1,14 @@
 # apps/interface/src/stores Overview
 <!-- tags: frontend, stores, state -->
 Date: 2025-10-28
-Last Review: 2026-04-02
+Last Review: 2026-04-07
 Status: Active
 
 ## Purpose
 - Pinia stores encapsulating shared UI/application state (tabs, task options, session data).
 
 ## Notes
-- 2026-03-26: `model_tabs.ts` now performs a non-blocking image-tab top-level canon backfill during `load()`: if raw persisted image params are missing canonical top-level keys, the store sends a direct PATCH containing only those missing materialized top-level owners. Stale top-level keys are filtered by the backend `ui.py` load/write gate, and this tranche does not widen into nested normalization/default drift ownership.
+- 2026-03-26: `model_tabs.ts` now performs a non-blocking image-tab top-level canon backfill during `load()`: if raw persisted image params are missing canonical top-level keys, the store queues a normal `updateParams(...)` patch containing only those missing materialized top-level owners so backfill shares the same serialized persist owner as later user edits. Stale top-level keys are filtered by the backend `ui.py` load/write gate, and this tranche does not widen into nested normalization/default drift ownership.
 - 2026-04-02: `model_tabs.ts::createDefaultSupirModeFormState()` is the canonical default owner for the nested image-tab `supir` state. Components must import that factory instead of duplicating local SUPIR fallback objects.
 - 2026-03-20: `xyz.ts` now reuses `utils/image_request_contract.ts` for the explicit image selector lane, so checkpoint metadata validation, FLUX.2 guidance mode, asset-contract lookup, required `tenc_sha`/`vae_sha`, and ZImage variant extras stay in parity with `useGeneration.ts`.
 - 2026-03-20: `xyz.ts` now emits explicit image selectors (`model_sha`, `checkpoint_core_only`, `model_format`, `vae_source`) and required asset SHAs from the active tab baseline instead of relying on `model`-as-SHA fallback or backend-side guessing.
@@ -52,9 +52,10 @@ Status: Active
 - 2026-01-25: `model_tabs.ts` image-tab defaults now set `clipSkip=0` (auto/default sentinel). Payload builders can still send explicit clip skip values; 0 resets to engine defaults.
 - 2026-01-27: `model_tabs.ts` WAN video params now include `returnFrames` (default false) to control whether frames are included in the final result payload (txt2vid/img2vid full frames; vid2vid preview frames).
 - 2026-01-28: `model_tabs.ts` Z-Image params now include `zimageTurbo` (default true) to persist the Turbo/Base variant selection per tab.
-- 2026-01-29: `model_tabs.ts` image-tab params now include masked img2img (“inpaint”) fields (`useMask`, `maskImageData`, and inpaint controls like enforcement/full-res/padding/invert/round/blur/fill mode) so the model tab can drive Codex-native masking end-to-end.
-- 2026-02-25: `model_tabs.ts` masked img2img defaults now follow Forge+ADetailer-oriented baseline (`maskEnforcement='per_step_clamp'`, `inpaintFullResPadding=32`) for new image tabs.
-- 2026-02-25: `model_tabs.ts::normalizeImageParams(...)` now normalizes persisted/legacy `maskEnforcement` through `normalizeMaskEnforcement(...)` (invalid values fail back to `per_step_clamp`) to avoid runtime 400s when stale tab payloads are loaded.
+- 2026-04-06: `model_tabs.ts` image-tab params now keep masked img2img runtime selection under `inpaintMode` (`per_step_blend`, `post_sample_blend`, `fooocus_inpaint`, `brushnet`). New image tabs default to `per_step_blend`, and `normalizeImageParams(...)` resets stale/unknown persisted values to that default instead of laundering removed enum names.
+- 2026-04-07: `model_tabs.ts` may still normalize missing `inpaintMode` in memory for live UI state, but it must not auto-backfill that field into `/api/ui/tabs` or later stamp the defaulted value back into persistence on unrelated full-tab saves unless the user explicitly changed `inpaintMode`; rollback and queued-save bookkeeping must restore the sparse-missing-key hint together with normalized params so failed writes cannot drift that owner boundary.
+- 2026-04-07: load-time image top-level canon backfills must stay on the same queued persist owner as live edits; do not reintroduce fire-and-forget `updateTabApi(...)` writes for those backfills or a late default backfill can overwrite a newer user mask/inpaint edit on legacy sparse tabs.
+- 2026-04-06: `engine_capabilities.ts` now treats dependency checks as two layers: semantic-engine global readiness (`ready`) plus optional mode-scoped rows (`inpaint_modes`). Image tabs must gate `fooocus_inpaint` against `fooocus_inpaint_assets` and `brushnet` against `brushnet_assets` without marking all of SDXL unavailable when only one exact masked lane is missing its dedicated assets.
 - 2026-02-01: `presets.ts` now supports an `upscale` mode for the standalone `/upscale` workspace presets.
 - 2026-02-01: Added `upscalers.ts` store to cache local upscalers inventory (`/api/upscalers`) and persist the global tile OOM fallback preference (shared by hires-fix + `/upscale`).
 - 2026-02-04: `upscalers.ts` now also persists the global `min_tile` preference for tiled upscaling (OOM fallback lower bound), propagated to txt2img hires payloads (`extras.hires.tile.min_tile`) and used by `/upscale`.

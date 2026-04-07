@@ -1,7 +1,7 @@
 <!-- tags: webui, architecture, map, discovery, backend -->
 # WebUI Subsystem Map
-Date: 2026-03-31
-Last Review: 2026-03-31
+Date: 2026-04-06
+Last Review: 2026-04-06
 Status: Active
 
 ## Purpose / ownership boundary
@@ -122,17 +122,18 @@ Status: Active
 ### img2img
 | Node | Owner | What happens here | Next |
 | --- | --- | --- | --- |
-| Public route | `apps/backend/interfaces/api/routers/generation.py` (`/api/img2img`) | Validates payload + route capability, rejects masked requests when the semantic engine capability surface says img2img masking is unsupported, preflights native `img2img_extras.supir` on exact SDXL engine ids, then creates the task and picks the explicit device. | shared image task worker |
+| Public route | `apps/backend/interfaces/api/routers/generation.py` (`/api/img2img`) | Validates payload + route capability, rejects masked requests when the semantic engine capability surface says img2img masking is unsupported, validates exact-engine `img2img_inpaint_mode`, preflights native `img2img_extras.supir` and exact SDXL Fooocus/BrushNet assets, then creates the task and picks the explicit device. | shared image task worker |
 | Shared image task worker | `apps/backend/interfaces/api/tasks/generation_tasks.py` | Calls `prepare_img2img(...)`, owns inference-gate/task lifecycle, and packages the terminal image result. | orchestrator |
 | Orchestrator | `apps/backend/core/orchestrator.py` | Resolves engine/load/cache state and dispatches to the mode wrapper. | engine `img2img(...)` wrapper |
 | Engine wrapper | `apps/backend/engines/common/base.py` | Delegates to the canonical img2img use-case. | `run_img2img(...)` |
-| Canonical use-case | `apps/backend/use_cases/img2img.py` | Owns classic-family dispatch, init-image planning, prompt/sampling plans, optional native SUPIR mode, optional masked img2img, and optional hires continuation. | shared stage helpers + sampler |
-| Shared stage helpers | `apps/backend/runtime/pipeline_stages/masked_img2img.py` and `apps/backend/runtime/pipeline_stages/hires_fix.py` | Prepare masked bundles, image conditioning, hires latents, and continuation hand-off. | API result packaging |
+| Canonical use-case | `apps/backend/use_cases/img2img.py` | Owns classic-family dispatch, init-image planning, prompt/sampling plans, optional native SUPIR mode, optional masked img2img, exact-engine SDXL Fooocus/BrushNet branching, and optional hires continuation. | shared stage helpers + sampler |
+| Shared stage helpers | `apps/backend/runtime/pipeline_stages/masked_img2img.py`, `apps/backend/runtime/families/sd/fooocus_inpaint.py`, `apps/backend/runtime/families/sd/brushnet.py`, and `apps/backend/runtime/pipeline_stages/hires_fix.py` | Prepare generic masked bundles/image conditioning/hires latents, while `fooocus_inpaint.py` and `brushnet.py` own the request-scoped SDXL exact-engine patch sessions before masked sampling. | API result packaging |
 | Terminal surfaces | `apps/backend/interfaces/api/tasks/generation_tasks.py` and `apps/backend/interfaces/api/routers/tasks.py` | Store the encoded result payload and expose terminal snapshot/SSE state. | end |
 
 Branch notes:
 - Classic base img2img resolves SD-vs-flow dispatch locally in `apps/backend/use_cases/img2img.py` before masked/unmasked prep.
 - SDXL SUPIR mode stays inside the canonical img2img owner: route preflight lives in `apps/backend/interfaces/api/routers/generation.py`, while the request-scoped restore runtime lives in `apps/backend/runtime/families/supir/runtime.py`.
+- SDXL exact-engine inpaint stays inside the canonical img2img owner: exact-engine mode/asset preflight lives in `apps/backend/interfaces/api/routers/generation.py`, while the request-scoped patch sessions live in `apps/backend/runtime/families/sd/fooocus_inpaint.py` and `apps/backend/runtime/families/sd/brushnet.py`.
 - Kontext-specific img2img work stays local to `apps/backend/use_cases/img2img.py`.
 - FLUX.2 keeps its own engine-side img2img seam at `apps/backend/engines/flux2/img2img.py`; the public route still enters through the same router/task/orchestrator chain.
 

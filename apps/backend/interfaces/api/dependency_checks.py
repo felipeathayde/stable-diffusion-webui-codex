@@ -11,10 +11,11 @@ Builds deterministic per-engine check rows from backend inventory/model-registry
 "Dependency Check" panel and disable generation when required assets are missing. Semantic-engine asset checks resolve through the
 canonical contract owner seam (`contract_owner_for_semantic_engine`) to prevent drift between API surfaces, including the
 vendored LTX2 metadata/config readiness required by explicit execution profiles and the explicit Netflix VOID base-bundle +
-literal overlay-pair readiness contract.
+literal overlay-pair readiness contract. Mode-scoped rows can now report exact masked-runtime readiness (for example SDXL `fooocus_inpaint`)
+without making the whole semantic engine globally unready.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `DependencyCheckRow` (dataclass): One backend dependency row (`id/label/ok/message`) rendered by the frontend.
+- `DependencyCheckRow` (dataclass): One backend dependency row (`id/label/ok/message`, with optional `inpaint_modes` scope) rendered by the frontend.
 - `EngineDependencyStatus` (dataclass): Aggregated dependency status for one semantic engine (`ready + checks`).
 - `build_engine_dependency_checks` (function): Build per-engine dependency status map for `/api/engines/capabilities`.
 """
@@ -34,6 +35,8 @@ from apps.backend.core.contracts.asset_requirements import (
 )
 from apps.backend.infra.config.paths import get_paths_for
 from apps.backend.inventory import cache as inventory_cache
+from apps.backend.runtime.families.sd.brushnet import resolve_brushnet_assets
+from apps.backend.runtime.families.sd.fooocus_inpaint import resolve_fooocus_inpaint_assets
 from apps.backend.runtime.families.ltx2.config import LTX2_VENDOR_REPO_ID, resolve_ltx2_vendor_paths
 from apps.backend.runtime.families.netflix_void.loader import resolve_netflix_void_base_dirs
 from apps.backend.runtime.model_registry.netflix_void_execution import (
@@ -53,6 +56,7 @@ class DependencyCheckRow:
     label: str
     ok: bool
     message: str
+    inpaint_modes: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -60,6 +64,7 @@ class DependencyCheckRow:
             "label": str(self.label),
             "ok": bool(self.ok),
             "message": str(self.message),
+            "inpaint_modes": [str(mode) for mode in self.inpaint_modes],
         }
 
 
@@ -74,7 +79,7 @@ class EngineDependencyStatus:
     def from_checks(cls, checks: Iterable[DependencyCheckRow]) -> "EngineDependencyStatus":
         rows = tuple(checks)
         return cls(
-            ready=all(bool(row.ok) for row in rows),
+            ready=all(bool(row.ok) for row in rows if len(row.inpaint_modes) == 0),
             checks=rows,
         )
 
@@ -222,6 +227,54 @@ def _netflix_void_warped_noise_runtime_check() -> DependencyCheckRow:
         label="Warped-Noise Runtime",
         ok=True,
         message="Netflix VOID warped-noise runtime dependencies are importable (torch + torchvision).",
+    )
+
+
+def _fooocus_inpaint_assets_check() -> DependencyCheckRow:
+    try:
+        assets = resolve_fooocus_inpaint_assets()
+    except Exception as exc:
+        return DependencyCheckRow(
+            id="fooocus_inpaint_assets",
+            label="Fooocus Inpaint Assets",
+            ok=False,
+            message=str(exc),
+            inpaint_modes=("fooocus_inpaint",),
+        )
+
+    return DependencyCheckRow(
+        id="fooocus_inpaint_assets",
+        label="Fooocus Inpaint Assets",
+        ok=True,
+        message=(
+            "Fooocus Inpaint assets resolved successfully: "
+            f"head={assets.head_path}; patch={assets.patch_path}."
+        ),
+        inpaint_modes=("fooocus_inpaint",),
+    )
+
+
+def _brushnet_assets_check() -> DependencyCheckRow:
+    try:
+        assets = resolve_brushnet_assets()
+    except Exception as exc:
+        return DependencyCheckRow(
+            id="brushnet_assets",
+            label="BrushNet Assets",
+            ok=False,
+            message=str(exc),
+            inpaint_modes=("brushnet",),
+        )
+
+    return DependencyCheckRow(
+        id="brushnet_assets",
+        label="BrushNet Assets",
+        ok=True,
+        message=(
+            "BrushNet assets resolved successfully: "
+            f"variant={assets.variant}; config={assets.config_path}; weights={assets.weights_path}."
+        ),
+        inpaint_modes=("brushnet",),
     )
 
 
@@ -757,6 +810,10 @@ def build_engine_dependency_checks(
                     ),
                 )
             )
+
+        if semantic_engine == "sdxl":
+            checks.append(_fooocus_inpaint_assets_check())
+            checks.append(_brushnet_assets_check())
 
         if semantic_engine == "wan22":
             has_wan_models = wan_model_count > 0

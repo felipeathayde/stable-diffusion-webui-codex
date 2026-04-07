@@ -14,6 +14,7 @@ The RUN surface now owns a split-button `Generate` / `Infinite` action selector,
 IP-Adapter stays on its dedicated nested-owner card, and SUPIR mode now lives on the header toggle plus a split body surface: `Img2ImgBasicParametersCard` owns the SUPIR sampler/scheduler row,
 while `SupirModeCard` owns the remaining SUPIR-specific controls with parent-owned blocking/gating/readiness.
 When inpaint masking is active, it also forwards natural init-image dimensions, current processing target dimensions, and the current invert-mask state to the shared card/editor preview seam, treats unresolved natural dims as unavailable instead of falling back to processing dims, and normalizes the invalid `maskInvert + maskRegionSplit` pair in the shared parent-owned param path.
+Exact-engine inpaint-mode availability now comes from `/api/engines/capabilities` (`exact_engine_inpaint_modes`), so SDXL can expose `Fooocus Inpaint` truthfully without laundering that mode onto `sdxl_refiner` or non-SDXL engines; stale unsupported values stay visible/blocking until the user reselects a supported mode.
 When `useInitImage=true`, generation parameters render through `Img2ImgBasicParametersCard` (shared layout with honest img2img control visibility).
 CFG Advanced/APG controls are capability-gated (`engineSurface.guidance_advanced`) and persist through tab params/profile snapshots.
 Hires settings list upscalers from `/api/upscalers` and share tile controls with `/upscale`.
@@ -32,6 +33,8 @@ Symbols (top-level; keep in sync; no ghosts):
 - `copyCurrentParams` (function): Copies current params snapshot to clipboard (async).
 - `onCancelRun` (function): Cancels the active run (XYZ sweep immediate stop or current image task cancel).
 - `showSupirModeCard` / `supportsSupirModeSurface` / `supirSelectionState` / `supirBlockingReason` (const): Shared SUPIR discoverability/readiness contract for the header toggle and split img2img parameter surface.
+- `availableInpaintModes` / `availableInpaintModeOptions` / `unsupportedInpaintMode` / `unsupportedInpaintModeMessage` (const): Exact-engine-owned inpaint-mode availability plus explicit invalid-submit blocking for the shared inpaint card.
+- `onInpaintModeChange` (function): Applies one validated inpaint-mode update and clears hidden per-step sliders when leaving `Per-step blend`.
 - `copyHistoryParams` (function): Copies a history entry’s params snapshot to clipboard (async).
 - `applyHistory` (function): Applies a history entry back into current state (prompt/params/assets).
 - `formatHistoryTitle` (function): Builds a human-friendly history title from a run entry.
@@ -117,7 +120,8 @@ Symbols (top-level; keep in sync; no ghosts):
             :useMask="supportsImg2ImgMasking && params.initSource.mode === 'img' ? params.useMask : false"
             :maskImageData="params.maskImageData"
             :maskImageName="params.maskImageName"
-            :maskEnforcement="params.maskEnforcement"
+            :inpaintMode="params.inpaintMode"
+            :inpaintModeOptions="availableInpaintModeOptions"
             :perStepBlendStrength="params.perStepBlendStrength"
             :perStepBlendSteps="params.perStepBlendSteps"
             :inpaintingFill="params.inpaintingFill"
@@ -132,7 +136,7 @@ Symbols (top-level; keep in sync; no ghosts):
             @clear:maskImage="clearMask"
             @apply:maskImageData="onMaskEditorApply"
             @notice:maskEditorReset="onMaskEditorResetNotice"
-            @update:maskEnforcement="(v) => setParams({ maskEnforcement: normalizeMaskEnforcement(v) })"
+            @update:inpaintMode="onInpaintModeChange"
             @update:perStepBlendStrength="(v) => setParams({ perStepBlendStrength: clampFloat(v, 0, 1) })"
             @update:perStepBlendSteps="(v) => setParams({ perStepBlendSteps: normalizeNonNegativeInt(v) })"
             @update:inpaintingFill="(v) => setParams({ inpaintingFill: normalizeInpaintingFill(v) })"
@@ -612,7 +616,7 @@ import {
 import {
   normalizeInpaintMaskToggleState,
   normalizeInpaintingFill,
-  normalizeMaskEnforcement,
+  parseInpaintMode,
   normalizeNonNegativeInt,
   resolveHiresModePolicy,
 } from '../utils/image_params'
@@ -819,14 +823,35 @@ const imageDimensionInputStep = computed(() => resolvedEngineForMode.value === '
 const imageDimensionSliderStep = computed(() => resolvedEngineForMode.value === 'zimage' ? 16 : 64)
 const img2imgResizeModeOptions = computed(() => img2imgResizeModeOptionsForEngine(resolvedEngineForMode.value))
 const engineSurface = computed(() => engineCaps.get(resolvedEngineForMode.value))
+const availableInpaintModes = computed(() => engineCaps.getInpaintModes(resolvedEngineForMode.value))
+const availableInpaintModeOptions = computed(() =>
+  availableInpaintModes.value.map((value) => ({
+    value: value as ImageBaseParams['inpaintMode'],
+    label: {
+      per_step_blend: 'Per-step blend',
+      post_sample_blend: 'Post-sample blend',
+      fooocus_inpaint: 'Fooocus Inpaint',
+      brushnet: 'BrushNet',
+    }[value] ?? value,
+  })),
+)
 const guidanceAdvancedSupport = computed<GuidanceAdvancedCapabilities | null>(() => {
   const guidance = engineSurface.value?.guidance_advanced
   return guidance ?? null
 })
 const familyCapabilities = computed(() => engineCaps.getFamilyForEngine(resolvedEngineForMode.value))
+const activeInpaintDependencyMode = computed(() => (
+  params.value.useInitImage && params.value.useMask && params.value.initSource.mode === 'img'
+    ? params.value.inpaintMode
+    : null
+))
 const dependencyStatus = computed(() => engineCaps.getDependencyStatus(resolvedEngineForMode.value))
-const dependencyError = computed(() => engineCaps.firstDependencyError(resolvedEngineForMode.value))
-const dependencyReady = computed(() => Boolean(dependencyStatus.value?.ready))
+const dependencyError = computed(() => engineCaps.firstDependencyError(resolvedEngineForMode.value, {
+  inpaintMode: activeInpaintDependencyMode.value,
+}))
+const dependencyReady = computed(() => engineCaps.isDependencyReady(resolvedEngineForMode.value, {
+  inpaintMode: activeInpaintDependencyMode.value,
+}))
 
 const zimageTurbo = computed(() => props.type === 'zimage' ? Boolean(params.value.zimageTurbo ?? true) : false)
 const flux2Variant = computed(() => (
@@ -867,7 +892,7 @@ const canGenerateForCurrentMode = computed(() =>
 const generateDisabledReason = computed(() => {
   if (isRunning.value) return ''
   if (!dependencyStatus.value) return `Dependency checks for '${resolvedEngineForMode.value}' are not available.`
-  if (!dependencyStatus.value.ready) return dependencyError.value || `Dependencies for '${resolvedEngineForMode.value}' are not ready.`
+  if (!dependencyReady.value) return dependencyError.value || `Dependencies for '${resolvedEngineForMode.value}' are not ready.`
   if (!engineSurface.value) return `Capabilities for '${resolvedEngineForMode.value}' are not loaded.`
   if (!familyCapabilities.value) return `Family capabilities for '${resolvedEngineForMode.value}' are not loaded.`
   if (filteredSamplers.value.length === 0) return `${engineConfig.value.label} has no family-compatible samplers available.`
@@ -978,6 +1003,16 @@ const missingInpaintMask = computed(() =>
   && Boolean(params.value.useMask)
   && !String(params.value.maskImageData || '').trim(),
 )
+const unsupportedInpaintMode = computed(() =>
+  Boolean(params.value.useInitImage)
+  && Boolean(params.value.useMask)
+  && params.value.initSource.mode === 'img'
+  && !availableInpaintModes.value.includes(params.value.inpaintMode),
+)
+const unsupportedInpaintModeMessage = computed(() => {
+  if (!unsupportedInpaintMode.value) return ''
+  return `Inpaint mode '${String(params.value.inpaintMode)}' is not available for ${engineConfig.value.label}. Reselect a supported mode.`
+})
 const runGenerateDisabled = computed(() => {
   if (isRunBusy.value) return true
   if (infiniteXyzConflict.value) return true
@@ -988,6 +1023,7 @@ const runGenerateDisabled = computed(() => {
   }
   if (initFolderMissingPath.value || dirInitMaskConflict.value || ipAdapterBlockingReason.value) return true
   if (missingInpaintMask.value) return true
+  if (unsupportedInpaintMode.value) return true
   return !canGenerateForCurrentMode.value
 })
 const runGenerateTitle = computed(() => {
@@ -1000,10 +1036,11 @@ const runGenerateTitle = computed(() => {
     if (supirEnabled.value && supirBlockingReason.value) return supirBlockingReason.value
     if (ipAdapterBlockingReason.value) return ipAdapterBlockingReason.value
     if (missingInpaintMask.value) return 'INPAINT is enabled but no mask is applied. Open the mask editor and apply a mask.'
+    if (unsupportedInpaintMode.value) return unsupportedInpaintModeMessage.value
     return generateDisabledReason.value
   }
   if (!dependencyStatus.value) return `Dependency checks for '${resolvedEngineForMode.value}' are not available.`
-  if (!dependencyStatus.value.ready) return dependencyError.value || `Dependencies for '${resolvedEngineForMode.value}' are not ready.`
+  if (!dependencyReady.value) return dependencyError.value || `Dependencies for '${resolvedEngineForMode.value}' are not ready.`
   if (!engineSurface.value) return `Capabilities for '${resolvedEngineForMode.value}' are not loaded.`
   if (!familyCapabilities.value) return `Family capabilities for '${resolvedEngineForMode.value}' are not loaded.`
   if (filteredSamplers.value.length === 0) return `${engineConfig.value.label} has no family-compatible samplers available.`
@@ -1354,6 +1391,17 @@ watch([supportsImg2ImgMasking, () => params.value.useMask], ([supported, useMask
   })
 }, { immediate: true })
 
+watch([availableInpaintModes, () => params.value.inpaintMode], ([modes, activeMode]) => {
+  if (!Array.isArray(modes) || modes.length === 0) return
+  if (modes.includes(activeMode)) return
+  if (params.value.perStepBlendStrength !== fallbackParams.value.perStepBlendStrength || params.value.perStepBlendSteps !== fallbackParams.value.perStepBlendSteps) {
+    setParams({
+      perStepBlendStrength: fallbackParams.value.perStepBlendStrength,
+      perStepBlendSteps: fallbackParams.value.perStepBlendSteps,
+    })
+  }
+}, { immediate: true })
+
 watch(() => hiresModePolicy.value.resetState, (shouldReset) => {
   if (!shouldReset) return
   if (!params.value.hires.enabled && !params.value.hires.refiner?.enabled) return
@@ -1521,6 +1569,10 @@ async function onGenerate(actionMode: ImageRunAction = params.value.runAction): 
   }
   if (infiniteXyzConflict.value) {
     toast('Infinite generate cannot run while XYZ is enabled.')
+    return
+  }
+  if (unsupportedInpaintMode.value) {
+    toast(unsupportedInpaintModeMessage.value)
     return
   }
   if (xyzStore.enabled) {
@@ -2002,6 +2054,17 @@ function normalizeImageParamPatch(patch: Partial<ImageBaseParams>): Partial<Imag
   if (patch.perStepBlendSteps !== undefined) {
     next.perStepBlendSteps = normalizeNonNegativeInt(patch.perStepBlendSteps)
   }
+  if (patch.inpaintMode !== undefined) {
+    const nextInpaintMode = parseInpaintMode(patch.inpaintMode)
+    if (nextInpaintMode === null) {
+      throw new Error(`ImageModelTab received invalid inpaintMode patch '${String(patch.inpaintMode)}'.`)
+    }
+    next.inpaintMode = nextInpaintMode
+    if (next.inpaintMode !== 'per_step_blend') {
+      next.perStepBlendStrength = fallbackParams.value.perStepBlendStrength
+      next.perStepBlendSteps = fallbackParams.value.perStepBlendSteps
+    }
+  }
   if (patch.img2imgResizeMode !== undefined) {
     next.img2imgResizeMode = normalizeImg2ImgResizeModeForEngine(resolvedEngineForMode.value, patch.img2imgResizeMode)
   }
@@ -2036,6 +2099,19 @@ function syncImageContractToEngine(): void {
     || patch.img2imgResizeMode !== params.value.img2imgResizeMode
   )
   if (!needsUpdate) return
+  setParams(patch)
+}
+
+function onInpaintModeChange(rawValue: string): void {
+  const nextMode = parseInpaintMode(rawValue)
+  if (nextMode === null) {
+    throw new Error(`ImageModelTab received invalid inpaintMode '${rawValue}'.`)
+  }
+  const patch: Partial<ImageBaseParams> = { inpaintMode: nextMode }
+  if (nextMode !== 'per_step_blend') {
+    patch.perStepBlendStrength = fallbackParams.value.perStepBlendStrength
+    patch.perStepBlendSteps = fallbackParams.value.perStepBlendSteps
+  }
   setParams(patch)
 }
 

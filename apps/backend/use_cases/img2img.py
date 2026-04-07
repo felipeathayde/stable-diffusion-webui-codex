@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Image-to-image use case orchestration and canonical streaming wrapper (init image + optional hires pass).
 Builds prompt/sampling plans from `CodexProcessingImg2Img`, prepares init-image bundles/latents, dispatches classic img2img conditioning by family, runs the sampler loop, optionally routes SDXL img2img/inpaint through native SUPIR mode, and optionally performs a hires second pass with family-specific continuation semantics.
 Masked img2img (“inpaint”) uses Forge/A1111 “Only masked” semantics and supports optional ADetailer-style multi-region passes for disconnected masks.
+Exact-engine SDXL `fooocus_inpaint` and `brushnet` now stay on request-scoped family helper seams while the shared masked stage remains generic-only.
 The hires pass init is prepared via the global family-dispatched hires-fix stage (`apps/backend/runtime/pipeline_stages/hires_fix.py`).
 When configured, the hires second pass parses LoRA tags from the hires prompt/negative prompt pair, inherits base/request LoRAs when the hires
 prompt omits them, and resolves explicit hires request overrides by deriving a dedicated `SamplingPlan` for the hires pass.
@@ -39,6 +40,7 @@ from __future__ import annotations
 from apps.backend.runtime.logging import get_backend_logger
 
 import gc
+import contextlib
 import math
 import threading
 from dataclasses import replace
@@ -98,6 +100,8 @@ from apps.backend.runtime.pipeline_stages.sampling_plan import (
 )
 from apps.backend.runtime.pipeline_stages.scripts import run_process_scripts
 from apps.backend.runtime.families.supir.runtime import run_supir_img2img
+from apps.backend.runtime.families.sd.brushnet import apply_brushnet_for_sampling
+from apps.backend.runtime.families.sd.fooocus_inpaint import apply_fooocus_inpaint_for_sampling
 from apps.backend.runtime.sampling.driver import CodexSampler
 from PIL import Image
 
@@ -109,6 +113,9 @@ _KONTEXT_MULTIPLE_OF = 16
 _CLASSIC_SD_IMG2IMG_ENGINES = {"sd15", "sd20", "sdxl", "sdxl_refiner", "sd35"}
 _CLASSIC_FLOW_IMG2IMG_ENGINES = {"flux1", "flux1_fill", "flux1_chroma", "zimage", "anima"}
 _CLASSIC_FLOW_MASKED_IMG2IMG_ENGINES = {"zimage"}
+_GENERIC_POST_SAMPLE_BLEND_INPAINT_MODE = "post_sample_blend"
+_FOOOCUS_INPAINT_MODE = "fooocus_inpaint"
+_BRUSHNET_INPAINT_MODE = "brushnet"
 
 # Recommended resolutions from upstream diffusers FluxKontextPipeline.
 _PREFERRED_KONTEXT_RESOLUTIONS: list[tuple[int, int]] = [
@@ -151,6 +158,24 @@ def _resolve_classic_img2img_backend(engine_id: str, *, has_mask: bool) -> str:
     raise NotImplementedError(
         f"Classic img2img backend is not implemented for engine '{normalized_engine_id}'."
     )
+
+
+def _resolve_shared_inpaint_mode(requested_mode: str | None) -> str:
+    normalized = str(requested_mode or "").strip()
+    if normalized in {_FOOOCUS_INPAINT_MODE, _BRUSHNET_INPAINT_MODE}:
+        return _GENERIC_POST_SAMPLE_BLEND_INPAINT_MODE
+    return normalized
+
+
+def _inpaint_sampling_session(*, processing: CodexProcessingImg2Img, masked_bundle) -> contextlib.AbstractContextManager[object]:
+    if masked_bundle is None:
+        return contextlib.nullcontext()
+    requested_mode = str(getattr(processing, "inpaint_mode", "") or "").strip()
+    if requested_mode == _FOOOCUS_INPAINT_MODE:
+        return apply_fooocus_inpaint_for_sampling(processing=processing, masked_bundle=masked_bundle)
+    if requested_mode == _BRUSHNET_INPAINT_MODE:
+        return apply_brushnet_for_sampling(processing=processing, masked_bundle=masked_bundle)
+    return contextlib.nullcontext()
 
 
 def _resolve_hires_target_dimensions(
@@ -942,11 +967,12 @@ def generate_img2img(
                     processing.init_image = current
                     processing.set_mask(_region_mask_from_bbox(source_mask=raw_mask, bbox=bbox))
 
-                    enforcement = getattr(processing, "mask_enforcement", None)
+                    requested_inpaint_mode = getattr(processing, "inpaint_mode", None)
+                    shared_inpaint_mode = _resolve_shared_inpaint_mode(requested_inpaint_mode)
                     masked_bundle, enforcer = prepare_masked_img2img_bundle(
                         processing,
                         plan,
-                        enforce_mode=enforcement,
+                        enforce_mode=shared_inpaint_mode,
                         include_image_conditioning=include_masked_image_conditioning,
                     )
                     if masked_bundle.full_res is None:
@@ -954,7 +980,7 @@ def generate_img2img(
 
                     processing.init_latent = masked_bundle.init_latent
                     processing.image_conditioning = masked_bundle.image_conditioning
-                    hooks = resolve_mask_enforcer_hooks(enforcer, enforce_mode=enforcement)
+                    hooks = resolve_mask_enforcer_hooks(enforcer, enforce_mode=shared_inpaint_mode)
                     pre_denoiser_hook = hooks.pre_denoiser
                     post_denoiser_hook = hooks.post_denoiser
                     post_step_hook = hooks.post_step
@@ -968,40 +994,41 @@ def generate_img2img(
                     denoise_strength = float(getattr(processing, "denoising_strength", 0.5) or 0.5)
 
                     runtime_result = None
-                    if processing.supir is not None:
-                        runtime_result = run_supir_img2img(
-                            processing,
-                            plan=plan,
-                            payload=payload,
-                            prompt_context=prompt_context,
-                            rng=pass_rng,
-                            noise=noise,
-                            source_tensor=source_tensor,
-                            pre_denoiser_hook=pre_denoiser_hook,
-                            post_denoiser_hook=post_denoiser_hook,
-                            post_step_hook=post_step_hook,
-                            post_sample_hook=post_sample_hook,
-                        )
-                        samples = runtime_result.samples
-                    else:
-                        samples = execute_sampling(
-                            processing,
-                            plan,
-                            payload,
-                            prompt_context,
-                            prompt_context.loras,
-                            rng=pass_rng,
-                            noise=noise,
-                            image_conditioning=image_conditioning,
-                            init_latent=init_latent,
-                            start_at_step=0,
-                            denoise_strength=denoise_strength,
-                            img2img_fix_steps=False,
-                            pre_denoiser_hook=pre_denoiser_hook,
-                            post_denoiser_hook=post_denoiser_hook,
-                            post_step_hook=post_step_hook,
-                            post_sample_hook=post_sample_hook,
-                        )
+                    with _inpaint_sampling_session(processing=processing, masked_bundle=masked_bundle):
+                        if processing.supir is not None:
+                            runtime_result = run_supir_img2img(
+                                processing,
+                                plan=plan,
+                                payload=payload,
+                                prompt_context=prompt_context,
+                                rng=pass_rng,
+                                noise=noise,
+                                source_tensor=source_tensor,
+                                pre_denoiser_hook=pre_denoiser_hook,
+                                post_denoiser_hook=post_denoiser_hook,
+                                post_step_hook=post_step_hook,
+                                post_sample_hook=post_sample_hook,
+                            )
+                            samples = runtime_result.samples
+                        else:
+                            samples = execute_sampling(
+                                processing,
+                                plan,
+                                payload,
+                                prompt_context,
+                                prompt_context.loras,
+                                rng=pass_rng,
+                                noise=noise,
+                                image_conditioning=image_conditioning,
+                                init_latent=init_latent,
+                                start_at_step=0,
+                                denoise_strength=denoise_strength,
+                                img2img_fix_steps=False,
+                                pre_denoiser_hook=pre_denoiser_hook,
+                                post_denoiser_hook=post_denoiser_hook,
+                                post_step_hook=post_step_hook,
+                                post_sample_hook=post_sample_hook,
+                            )
 
                     last_samples = samples
                     gc.collect()
@@ -1052,17 +1079,18 @@ def generate_img2img(
                     metadata=last_metadata,
                 )
 
-        enforcement = getattr(processing, "mask_enforcement", None)
+        requested_inpaint_mode = getattr(processing, "inpaint_mode", None)
+        shared_inpaint_mode = _resolve_shared_inpaint_mode(requested_inpaint_mode)
         masked_bundle, enforcer = prepare_masked_img2img_bundle(
             processing,
             plan,
-            enforce_mode=enforcement,
+            enforce_mode=shared_inpaint_mode,
             include_image_conditioning=include_masked_image_conditioning,
         )
         processing.init_latent = masked_bundle.init_latent
         processing.image_conditioning = masked_bundle.image_conditioning
         full_res_plan = masked_bundle.full_res
-        hooks = resolve_mask_enforcer_hooks(enforcer, enforce_mode=enforcement)
+        hooks = resolve_mask_enforcer_hooks(enforcer, enforce_mode=shared_inpaint_mode)
         pre_denoiser_hook = hooks.pre_denoiser
         post_denoiser_hook = hooks.post_denoiser
         post_step_hook = hooks.post_step
@@ -1096,40 +1124,41 @@ def generate_img2img(
     denoise_strength = denoise_value
 
     runtime_result = None
-    if processing.supir is not None:
-        runtime_result = run_supir_img2img(
-            processing,
-            plan=plan,
-            payload=payload,
-            prompt_context=prompt_context,
-            rng=rng,
-            noise=noise,
-            source_tensor=source_tensor,
-            pre_denoiser_hook=pre_denoiser_hook,
-            post_denoiser_hook=post_denoiser_hook,
-            post_step_hook=post_step_hook,
-            post_sample_hook=post_sample_hook,
-        )
-        samples = runtime_result.samples
-    else:
-        samples = execute_sampling(
-            processing,
-            plan,
-            payload,
-            prompt_context,
-            prompt_context.loras,
-            rng=rng,
-            noise=noise,
-            image_conditioning=image_conditioning,
-            init_latent=init_latent,
-            start_at_step=start_step,
-            denoise_strength=denoise_strength,
-            img2img_fix_steps=False,
-            pre_denoiser_hook=pre_denoiser_hook,
-            post_denoiser_hook=post_denoiser_hook,
-            post_step_hook=post_step_hook,
-            post_sample_hook=post_sample_hook,
-        )
+    with _inpaint_sampling_session(processing=processing, masked_bundle=masked_bundle if processing.has_mask() else None):
+        if processing.supir is not None:
+            runtime_result = run_supir_img2img(
+                processing,
+                plan=plan,
+                payload=payload,
+                prompt_context=prompt_context,
+                rng=rng,
+                noise=noise,
+                source_tensor=source_tensor,
+                pre_denoiser_hook=pre_denoiser_hook,
+                post_denoiser_hook=post_denoiser_hook,
+                post_step_hook=post_step_hook,
+                post_sample_hook=post_sample_hook,
+            )
+            samples = runtime_result.samples
+        else:
+            samples = execute_sampling(
+                processing,
+                plan,
+                payload,
+                prompt_context,
+                prompt_context.loras,
+                rng=rng,
+                noise=noise,
+                image_conditioning=image_conditioning,
+                init_latent=init_latent,
+                start_at_step=start_step,
+                denoise_strength=denoise_strength,
+                img2img_fix_steps=False,
+                pre_denoiser_hook=pre_denoiser_hook,
+                post_denoiser_hook=post_denoiser_hook,
+                post_step_hook=post_step_hook,
+                post_sample_hook=post_sample_hook,
+            )
     result_metadata = _merge_generation_metadata(processing, runtime_result)
     _emit_pipeline_event(
         processing,

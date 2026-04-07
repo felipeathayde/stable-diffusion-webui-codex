@@ -10,8 +10,8 @@ Purpose: Model and asset inventory API routes.
 Exposes checkpoints, inventories (sync + async refresh task start), path scan/add helpers (with file size metadata), executable sampler/scheduler
 surfaces, embeddings, and engine capabilities.
 Inventory payloads include first-class IP-Adapter model and image-encoder lists from the dedicated roots in `apps/paths.json`.
-Capability surfaces include semantic-engine asset contracts (owner-resolved from canonical engine ids) plus backend-owned dependency checks
-so the UI can enforce sha-only external asset selection and readiness gating deterministically. Also provides prompt token-counting
+Capability surfaces include semantic-engine asset contracts (owner-resolved from canonical engine ids), backend-owned exact-engine inpaint-mode maps,
+and backend-owned dependency checks so the UI can enforce sha-only external asset selection and readiness gating deterministically. Also provides prompt token-counting
 (`/api/models/prompt-token-count`) using vendored offline tokenizers, including FLUX.2 Klein 4B, LTX2, WAN22 animate engine ids, and
 Anima runtime-equivalent Qwen+T5 prompt tokenization/max-length checks with the same family-owned offline tokenizer rules used by the runtime. Raw `/api/samplers`
 inventory keeps unsupported rows visible with non-executable metadata (`supported=false`, `default_scheduler=null`, `allowed_schedulers=[]`),
@@ -31,9 +31,6 @@ Symbols (top-level; keep in sync; no ghosts):
 - `_save_paths_config` (function): Persists paths config updates (fail-loud).
 - `_resolve_paths_config_entry_path` (function): Resolves one paths config entry to an absolute filesystem path.
 - `_paths_config_entry_for_file` (function): Converts absolute file paths into paths.json entry semantics.
-- `_file_size_bytes` (function): Reads file size metadata for scan/add payloads (fail-loud).
-- `_resolve_existing_library_paths` (function): Loads/validates one paths.json key and resolves entries to absolute paths.
-- `_is_file_already_in_library` (function): Checks whether a candidate file is already covered by a library key paths config.
 """
 
 from __future__ import annotations
@@ -854,6 +851,7 @@ def build_router(
         try:
             from apps.backend.runtime.model_registry.capabilities import (
                 ENGINE_ID_TO_SEMANTIC_ENGINE,
+                serialize_exact_engine_inpaint_modes,
                 serialize_engine_capabilities,
                 serialize_family_capabilities,
                 serialize_parked_exact_engines,
@@ -892,6 +890,7 @@ def build_router(
                 "smart_cache": cache_stats,
                 "asset_contracts": asset_contracts,
                 "engine_id_to_semantic_engine": engine_id_to_semantic_engine,
+                "exact_engine_inpaint_modes": serialize_exact_engine_inpaint_modes(),
                 "parked_exact_engines": serialize_parked_exact_engines(),
                 "dependency_checks": dependency_checks,
             }

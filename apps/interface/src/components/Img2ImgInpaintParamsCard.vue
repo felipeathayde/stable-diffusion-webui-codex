@@ -7,7 +7,7 @@ SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
 Purpose: Presentational parameter card for image init/mask workflows.
-Groups img2img controls (initial image upload or folder-backed `DIR|IMG` source selection) and optional inpaint controls (canvas-mask tools + enforcement/per-step blend strength/steps/fill + masked padding + mask blur + invert/region-splitting toggles),
+Groups img2img controls (initial image upload or folder-backed `DIR|IMG` source selection) and optional inpaint controls (canvas-mask tools + inpaint-mode/per-step blend strength/steps/fill + masked padding + mask blur + invert/region-splitting toggles),
 including dropzone/thumb/zoom handling for init images, nested `initSource` patch emits for parent state, rejected-file pass-through emits for parent toasts, and optional
 embedded/title/label overrides so non-image tabs can reuse the same card shell without duplicating UI logic.
 When `Per-step blend` is active, the strength/step-limit sliders share one proportional desktop row instead of stacking as separate full-width rows.
@@ -25,7 +25,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `perStepBlendSteps` (prop): Limits how many outer sampling steps `Per-step blend` stays active before the final preserved-content close.
 - `zoomFrameGuide` (prop): Optional WAN frame-guide config forwarded to `InitialImageCard` zoom overlay.
 - `onZoomFrameGuideUpdate` (function): Forwards zoom-overlay guide edits to parent WAN state.
-- `onMaskEnforcementChange` (function): Emits raw mask enforcement select updates for parent-side normalization.
+- `onInpaintModeChange` (function): Emits raw inpaint-mode select updates for parent-side normalization.
 - `onInpaintingFillChange` (function): Emits raw masked-content numeric updates for parent-side normalization.
 - `onMaskEditorApply` (function): Emits edited mask data URL produced by the inpaint mask editor overlay.
 - `onInitPreviewClick` (function): Opens the mask editor when inpaint mode is active and an init image is present.
@@ -36,6 +36,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `previewHasBlurSpill` (ref): Tracks whether the current preview overlay actually contains outward blur spill beyond the hard mask.
 - `schedulePreviewOverlaySourceRender` (function): Coalesces thumbnail overlay raster updates after mask/blur changes.
 - `previewCropStyle` (computed): Expresses the effective masked-region crop box directly in image-space percentages inside the thumbnail wrapper.
+- `showUnsupportedActiveInpaintMode` (computed): Surfaces an explicit disabled select option when the current exact-engine mode is no longer supported.
 -->
 
 <template>
@@ -144,18 +145,19 @@ Symbols (top-level; keep in sync; no ghosts):
           <label class="label-muted">
             <HoverTooltip
               class="cdx-slider-field__label-tooltip"
-              :title="INPAINT_PARAMETER_TOOLTIPS.enforcement.title"
-              :content="INPAINT_PARAMETER_TOOLTIPS.enforcement.content"
+              :title="INPAINT_PARAMETER_TOOLTIPS.mode.title"
+              :content="INPAINT_PARAMETER_TOOLTIPS.mode.content"
             >
               <span class="cdx-slider-field__label-trigger">
-                <span>Enforcement</span>
+                <span>Inpaint mode</span>
                 <span class="cdx-slider-field__label-help" aria-hidden="true">?</span>
               </span>
             </HoverTooltip>
           </label>
-          <select class="select-md" :disabled="disabled" :value="maskEnforcement" @change="onMaskEnforcementChange">
-            <option value="per_step_clamp">Per-step blend</option>
-            <option value="post_blend">Post-sample blend</option>
+          <select class="select-md" :disabled="disabled || resolvedInpaintModeOptions.length === 0" :value="inpaintMode" @change="onInpaintModeChange">
+            <option v-if="resolvedInpaintModeOptions.length === 0" value="" disabled>No inpaint modes available for this engine</option>
+            <option v-else-if="showUnsupportedActiveInpaintMode" :value="inpaintMode" disabled>Current mode unavailable for this engine - reselect</option>
+            <option v-for="option in resolvedInpaintModeOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
           </select>
         </div>
 
@@ -219,7 +221,7 @@ Symbols (top-level; keep in sync; no ghosts):
         </div>
       </div>
 
-      <div v-if="maskEnforcement === 'per_step_clamp'" class="gc-row img2img-mask-slider-row">
+      <div v-if="inpaintMode === 'per_step_blend'" class="gc-row img2img-mask-slider-row">
         <SliderField
           class="gc-col gc-col--wide"
           label="Per-step blend strength"
@@ -322,7 +324,7 @@ import {
 } from '../utils/inpaint_mask_preview'
 import type { WanImg2VidFrameGuideConfig } from '../utils/wan_img2vid_frame_projection'
 
-type MaskEnforcement = 'post_blend' | 'per_step_clamp'
+type InpaintMode = 'per_step_blend' | 'post_sample_blend' | 'fooocus_inpaint' | 'brushnet'
 
 const SOURCE_MODE_OPTIONS = [
   { value: 'dir', label: 'DIR' },
@@ -344,14 +346,17 @@ const PREVIEW_MASK_TINT = {
 } as const
 
 const INPAINT_PARAMETER_TOOLTIPS = {
-  enforcement: {
-    title: 'Enforcement',
-    content: [
-      'Controls when and how preserved content outside the effective mask is restored.',
-      '[[Per-step blend:]] reapplies that preserved outside-mask content before and after denoiser steps, then restores it again at the end.',
-      '[[Post-sample blend:]] skips the per-step clamps and restores the preserved outside-mask content only after sampling finishes.',
-    ],
-  },
+  mode: {
+    title: 'Inpaint mode',
+      content: [
+        'Controls which inpaint runtime path owns the masked sampling pass.',
+        '[[Per-step blend:]] keeps the generic masked runtime and blends preserved outside-mask content back on each step.',
+        '[[Post-sample blend:]] keeps the generic masked runtime and restores preserved outside-mask content only after sampling finishes.',
+        '[[Fooocus Inpaint:]] uses the SDXL-only Fooocus inpaint patch/runtime path and requires `fooocus_inpaint_head.pth` plus `inpaint_v26.fooocus.patch`.',
+        '[[Fooocus Inpaint:]] does not support distilled, Turbo, Lightning, or Hyper SDXL variants.',
+        '[[BrushNet:]] uses the SDXL-only BrushNet runtime path pinned to `random_mask_brushnet_ckpt_sdxl_v0` under the dedicated `sdxl_brushnet` root.',
+      ],
+    },
   maskedContent: {
     title: 'Masked content',
     content: [
@@ -446,7 +451,8 @@ const props = withDefaults(defineProps<{
   useMask: boolean
   maskImageData?: string
   maskImageName?: string
-  maskEnforcement: MaskEnforcement
+  inpaintMode: InpaintMode
+  inpaintModeOptions?: Array<{ value: InpaintMode; label: string }>
   perStepBlendStrength?: number
   perStepBlendSteps?: number
   inpaintingFill: number
@@ -476,7 +482,8 @@ const props = withDefaults(defineProps<{
   initImageName: '',
   maskImageData: '',
   maskImageName: '',
-  maskEnforcement: 'per_step_clamp',
+  inpaintMode: 'per_step_blend',
+  inpaintModeOptions: () => [],
   perStepBlendStrength: 1,
   perStepBlendSteps: 0,
   maskInvert: false,
@@ -492,7 +499,7 @@ const emit = defineEmits<{
   (e: 'clear:maskImage'): void
   (e: 'apply:maskImageData', value: string): void
   (e: 'notice:maskEditorReset', message: string): void
-  (e: 'update:maskEnforcement', value: string): void
+  (e: 'update:inpaintMode', value: string): void
   (e: 'update:perStepBlendStrength', value: number): void
   (e: 'update:perStepBlendSteps', value: number): void
   (e: 'update:inpaintingFill', value: number): void
@@ -705,8 +712,8 @@ function renderPreviewOverlaySource(): void {
   }
 }
 
-function onMaskEnforcementChange(event: Event): void {
-  emit('update:maskEnforcement', (event.target as HTMLSelectElement).value)
+function onInpaintModeChange(event: Event): void {
+  emit('update:inpaintMode', (event.target as HTMLSelectElement).value)
 }
 
 function onInpaintingFillChange(event: Event): void {
@@ -770,6 +777,26 @@ function loadMaskPreviewImage(src: string): Promise<HTMLImageElement> {
     image.src = src
   })
 }
+
+const INPAINT_MODE_LABELS: Record<InpaintMode, string> = {
+  per_step_blend: 'Per-step blend',
+  post_sample_blend: 'Post-sample blend',
+  fooocus_inpaint: 'Fooocus Inpaint',
+  brushnet: 'BrushNet',
+}
+
+const resolvedInpaintModeOptions = computed(() => {
+  const raw = Array.isArray(props.inpaintModeOptions) ? props.inpaintModeOptions : []
+  return raw.map((entry) => ({
+    value: entry.value,
+    label: INPAINT_MODE_LABELS[entry.value] ?? entry.label,
+  }))
+})
+
+const showUnsupportedActiveInpaintMode = computed(() => (
+  resolvedInpaintModeOptions.value.length > 0
+    && !resolvedInpaintModeOptions.value.some((option) => option.value === props.inpaintMode)
+))
 </script>
 
 <!-- styles in styles/components/img2img-inpaint-params-card.css -->

@@ -10,10 +10,10 @@ Purpose: Pure normalization helpers for image-tab parameter controls.
 Centralizes normalization used by img2img/inpaint UI updates, init-image mode cleanup, inpaint-toggle interlocks, and capability-driven hires visibility so parent handlers stay explicit and unit-testable.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `MaskEnforcement` (type): Allowed mask enforcement values.
+- `InpaintMode` (type): Allowed inpaint mode values.
 - `InpaintMaskToggleState` (interface): Normalized interlock state for invert-mask and split-mask toggles.
 - `UseInitImageModePatch` (interface): Canonical mode-toggle cleanup patch for txt2img/img2img init-image ownership.
-- `normalizeMaskEnforcement` (function): Normalizes a raw select value into a strict mask-enforcement enum.
+- `parseInpaintMode` (function): Parses one strict inpaint-mode enum value or returns `null` for stale/invalid input.
 - `normalizeInpaintingFill` (function): Clamps masked-content fill mode to backend-supported integer range `[0, 3]`.
 - `normalizeNonNegativeInt` (function): Truncates and clamps any numeric input to `>= 0`.
 - `buildUseInitImagePatch` (function): Builds the canonical init-image/mask cleanup patch when toggling img2img ownership.
@@ -23,7 +23,7 @@ Symbols (top-level; keep in sync; no ghosts):
 - `resolveHiresModePolicy` (function): Resolves hires panel visibility and reset behavior for the active mode/engine/mask combination.
 */
 
-export type MaskEnforcement = 'post_blend' | 'per_step_clamp'
+export type InpaintMode = 'per_step_blend' | 'post_sample_blend' | 'fooocus_inpaint' | 'brushnet'
 export interface InpaintMaskToggleState {
   maskInvert: boolean
   maskRegionSplit: boolean
@@ -37,8 +37,11 @@ export interface UseInitImageModePatch {
   maskImageName: string
 }
 
-export function normalizeMaskEnforcement(value: string): MaskEnforcement {
-  return value === 'post_blend' ? 'post_blend' : 'per_step_clamp'
+export function parseInpaintMode(value: unknown): InpaintMode | null {
+  if (value === 'per_step_blend' || value === 'post_sample_blend' || value === 'fooocus_inpaint' || value === 'brushnet') {
+    return value
+  }
+  return null
 }
 
 export function normalizeInpaintingFill(value: number): number {

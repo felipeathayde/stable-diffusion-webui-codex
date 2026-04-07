@@ -24,15 +24,19 @@ Symbols (top-level; keep in sync; no ghosts):
 - `ENGINE_SURFACES` (constant): Mapping of semantic engine tag to `EngineParamSurface`.
 - `ENGINE_ID_TO_SEMANTIC_ENGINE` (constant): Canonical mapping from API engine ids to semantic engine tags.
 - `PARKED_EXACT_ENGINES` (constant): Mapping of exact engine ids that remain public only as parked placeholders.
+- `EXACT_ENGINE_INPAINT_MODES` (constant): Mapping of exact engine ids to supported public img2img inpaint modes.
 - `ip_adapter_support_error` (function): Return the fail-loud exact-engine/semantic-engine support error for IP-Adapter, or `None` when supported.
 - `supports_ip_adapter_engine_id` (function): Return whether the exact engine id is allowed to run IP-Adapter in tranche 1.
 - `supir_support_error` (function): Return the fail-loud exact-engine/semantic-engine support error for SUPIR mode, or `None` when supported.
+- `inpaint_modes_for_engine_id` (function): Return the exact-engine-owned public img2img inpaint modes.
+- `inpaint_mode_support_error` (function): Return the fail-loud exact-engine support error for one public img2img inpaint mode, or `None` when supported.
 - `build_ltx2_capability_surface` (function): Build the truthful semantic capability surface for the live LTX2 lane.
 - `list_engine_capabilities` (function): Returns engine surfaces keyed by string tag for API responses.
 - `semantic_engine_for_engine_id` (function): Resolve a semantic engine tag from an API engine id (fail-loud on unknown ids).
 - `primary_family_for_engine_id` (function): Resolve the exact primary `ModelFamily` authority for a runtime engine id (fail-loud on unknown ids).
 - `engine_supports_cfg` (function): Return whether the engine family supports classic CFG (`cfg`) via family capabilities.
 - `serialize_engine_capabilities` (function): Returns engine capability surfaces as JSON-serializable dicts.
+- `serialize_exact_engine_inpaint_modes` (function): Returns exact-engine img2img inpaint modes as JSON-serializable dicts.
 - `serialize_family_capabilities` (function): Returns model family capability surfaces as JSON-serializable dicts.
 - `serialize_parked_exact_engines` (function): Returns parked exact-engine stubs as JSON-serializable dicts.
 """
@@ -351,6 +355,31 @@ PARKED_EXACT_ENGINES: Dict[str, ParkedExactEngineStub] = {
     ),
 }
 
+_GENERIC_INPAINT_MODES: tuple[str, ...] = ("per_step_blend", "post_sample_blend")
+
+EXACT_ENGINE_INPAINT_MODES: Dict[str, tuple[str, ...]] = {
+    "sd15": _GENERIC_INPAINT_MODES,
+    "sd20": _GENERIC_INPAINT_MODES,
+    "sdxl": (*_GENERIC_INPAINT_MODES, "fooocus_inpaint", "brushnet"),
+    "sdxl_refiner": (),
+    "flux1": (),
+    "flux1_kontext": (),
+    "flux1_fill": (),
+    "flux2": _GENERIC_INPAINT_MODES,
+    "flux1_chroma": (),
+    "zimage": _GENERIC_INPAINT_MODES,
+    "anima": (),
+    "wan22": (),
+    "wan22_5b": (),
+    "wan22_14b": (),
+    "wan22_14b_animate": (),
+    "ltx2": (),
+    "sd35": (),
+    "netflix_void": (),
+    "svd": (),
+    "hunyuan_video": (),
+}
+
 _IP_ADAPTER_EXACT_ENGINE_REJECTS: Dict[str, str] = {
     "sd20": "Engine 'sd20' is unsupported for IP-Adapter in tranche 1.",
     "sd35": "Engine 'sd35' is unsupported for IP-Adapter in tranche 1.",
@@ -454,6 +483,37 @@ def supir_support_error(engine_id: str) -> str | None:
         "Supported semantic engine: sdxl (exact engine id 'sdxl' only)."
     )
 
+
+def inpaint_modes_for_engine_id(engine_id: str) -> tuple[str, ...]:
+    normalized = str(engine_id or "").strip().lower()
+    if normalized == "":
+        raise KeyError("Engine id is empty.")
+    if normalized in EXACT_ENGINE_INPAINT_MODES:
+        return EXACT_ENGINE_INPAINT_MODES[normalized]
+    if normalized in ENGINE_ID_TO_SEMANTIC_ENGINE or normalized in PARKED_EXACT_ENGINES:
+        return ()
+    raise KeyError(f"Unknown engine id for inpaint mode mapping: {normalized!r}")
+
+
+def inpaint_mode_support_error(engine_id: str, mode: str) -> str | None:
+    normalized_engine = str(engine_id or "").strip().lower()
+    normalized_mode = str(mode or "").strip()
+    if normalized_engine == "":
+        return "Img2img inpaint mode requires a non-empty engine id."
+    if normalized_mode == "":
+        return "Img2img inpaint mode requires a non-empty mode value."
+    try:
+        supported_modes = inpaint_modes_for_engine_id(normalized_engine)
+    except KeyError:
+        return f"Engine '{normalized_engine}' is unsupported for img2img inpaint mode '{normalized_mode}'."
+    if normalized_mode in supported_modes:
+        return None
+    supported_label = ", ".join(supported_modes) if supported_modes else "none"
+    return (
+        f"Engine '{normalized_engine}' does not support img2img inpaint mode '{normalized_mode}'. "
+        f"Supported modes: {supported_label}."
+    )
+
 def engine_supports_cfg(engine_id: str) -> bool:
     from apps.backend.runtime.model_registry.family_runtime import get_family_spec
 
@@ -492,6 +552,10 @@ def serialize_parked_exact_engines() -> Dict[str, Dict[str, str]]:
     return {engine_id: asdict(stub) for engine_id, stub in PARKED_EXACT_ENGINES.items()}
 
 
+def serialize_exact_engine_inpaint_modes() -> Dict[str, list[str]]:
+    return {engine_id: list(modes) for engine_id, modes in EXACT_ENGINE_INPAINT_MODES.items()}
+
+
 __all__ = [
     "SemanticEngine",
     "GuidanceAdvancedSurface",
@@ -500,9 +564,12 @@ __all__ = [
     "ENGINE_SURFACES",
     "ENGINE_ID_TO_SEMANTIC_ENGINE",
     "PARKED_EXACT_ENGINES",
+    "EXACT_ENGINE_INPAINT_MODES",
     "ip_adapter_support_error",
     "supports_ip_adapter_engine_id",
     "supir_support_error",
+    "inpaint_modes_for_engine_id",
+    "inpaint_mode_support_error",
     "build_ltx2_capability_surface",
     "list_engine_capabilities",
     "semantic_engine_for_engine_id",
@@ -511,4 +578,5 @@ __all__ = [
     "serialize_engine_capabilities",
     "serialize_family_capabilities",
     "serialize_parked_exact_engines",
+    "serialize_exact_engine_inpaint_modes",
 ]

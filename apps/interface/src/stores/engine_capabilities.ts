@@ -9,13 +9,17 @@ Required Notice: see NOTICE
 Purpose: Pinia store for backend engine capability gating.
 Fetches `/api/engines/capabilities` and exposes cached capability + family + asset-contract + backend-owned dependency-check maps so views/components can gate
 UI features, required asset selection, family-specific behavior, readiness indicators, family-scoped sampler/scheduler filtering, and the LTX-only
-execution-profile/default surface from a single contract surface.
+execution-profile/default surface from a single contract surface. The dependency-check helpers also resolve mode-scoped readiness rows
+so SDXL `fooocus_inpaint` can stay code-supported while still blocking only that runtime mode when its dedicated assets are missing.
 
 Symbols (top-level; keep in sync; no ghosts):
+- `parseCapabilityInpaintMode` (function): Validates one inpaint-mode token from backend capability payloads against the canonical UI enum.
 - `asEngineDependencyCheckRow` (function): Validates/coerces one dependency-check row from unknown payload data.
 - `asEngineDependencyStatus` (function): Validates/coerces one dependency status payload per semantic engine.
 - `parseDependencyChecks` (function): Parses strict `dependency_checks` map from capabilities response.
-- `parseEngineIdToSemanticMap` (function): Parses strict `engine_id_to_semantic_engine` map from capabilities response.
+- `getApplicableDependencyChecks` / `isDependencyReady` / `firstDependencyError` (store helpers): Resolve global + mode-scoped dependency readiness for one engine surface.
+ - `parseEngineIdToSemanticMap` (function): Parses strict `engine_id_to_semantic_engine` map from capabilities response.
+ - `parseExactEngineInpaintModes` (function): Parses strict `exact_engine_inpaint_modes` map from capabilities response.
 - `asLtxExecutionSurface` (function): Parses the optional nested LTX execution-profile/default surface from one engine capability row.
 - `filterSamplersForFamilyCapabilities` (function): Applies family `supported_samplers`/`excluded_samplers` constraints to executable sampler rows.
 - `filterSchedulersForFamilyCapabilities` (function): Applies family `supported_schedulers`/`excluded_schedulers` constraints to executable scheduler rows.
@@ -46,6 +50,7 @@ import {
   resolveSemanticEngineForEngineId,
   type SamplingDefaults,
 } from '../utils/engine_taxonomy'
+import { parseInpaintMode, type InpaintMode } from '../utils/image_params'
 
 const CAPABILITIES_CONTRACT_ERROR_PREFIX = "Invalid '/api/engines/capabilities' response:"
 
@@ -65,6 +70,15 @@ function toUniqueNonEmptyStrings(values: Array<string | null | undefined>): stri
     out.push(value)
   }
   return out
+}
+
+function parseCapabilityInpaintMode(
+  rawValue: string,
+  context: string,
+): InpaintMode {
+  const mode = parseInpaintMode(rawValue.trim())
+  if (mode) return mode
+  throw new Error(`${CAPABILITIES_CONTRACT_ERROR_PREFIX} ${context} has unsupported inpaint mode '${rawValue}'.`)
 }
 
 function parseFamilySamplingList(
@@ -265,7 +279,28 @@ function asEngineDependencyCheckRow(
   if (!message) {
     throw new Error(`${CAPABILITIES_CONTRACT_ERROR_PREFIX} dependency check row '${id}' for '${engine}' has missing 'message'.`)
   }
-  return { id, label, ok: row.ok, message }
+  let inpaintModes: InpaintMode[] | undefined
+  if (row.inpaint_modes !== undefined) {
+    if (!Array.isArray(row.inpaint_modes)) {
+      throw new Error(
+        `${CAPABILITIES_CONTRACT_ERROR_PREFIX} dependency check row '${id}' for '${engine}' has non-array 'inpaint_modes'.`,
+      )
+    }
+    inpaintModes = toUniqueNonEmptyStrings(
+      row.inpaint_modes.map((entry, modeIndex) => {
+        if (typeof entry !== 'string') {
+          throw new Error(
+            `${CAPABILITIES_CONTRACT_ERROR_PREFIX} dependency check row '${id}' for '${engine}' has non-string 'inpaint_modes[${modeIndex}]'.`,
+          )
+        }
+        return parseCapabilityInpaintMode(
+          entry,
+          `dependency check row '${id}' for '${engine}' 'inpaint_modes[${modeIndex}]'`,
+        )
+      }),
+    ) as InpaintMode[]
+  }
+  return { id, label, ok: row.ok, message, inpaint_modes: inpaintModes }
 }
 
 function asEngineDependencyStatus(
@@ -284,13 +319,15 @@ function asEngineDependencyStatus(
     throw new Error(`${CAPABILITIES_CONTRACT_ERROR_PREFIX} dependency status for '${engine}' has missing 'checks' array.`)
   }
   const checks = status.checks.map((row, index) => asEngineDependencyCheckRow(row, { index, engine }))
-  const derivedReady = checks.every((row) => row.ok)
-  if (derivedReady !== status.ready) {
+  const derivedGlobalReady = checks
+    .filter((row) => !Array.isArray(row.inpaint_modes) || row.inpaint_modes.length === 0)
+    .every((row) => row.ok)
+  if (derivedGlobalReady !== status.ready) {
     throw new Error(
-      `${CAPABILITIES_CONTRACT_ERROR_PREFIX} dependency status for '${engine}' is inconsistent (ready=${String(status.ready)} but checks imply ready=${String(derivedReady)}).`,
+      `${CAPABILITIES_CONTRACT_ERROR_PREFIX} dependency status for '${engine}' is inconsistent (ready=${String(status.ready)} but global checks imply ready=${String(derivedGlobalReady)}).`,
     )
   }
-  return { ready: status.ready, checks }
+  return { ready: derivedGlobalReady, checks }
 }
 
 function parseDependencyChecks(payload: unknown): Record<string, EngineDependencyStatus> {
@@ -325,6 +362,47 @@ function parseEngineIdToSemanticMap(payload: unknown): Record<string, string> {
   }
   for (const engineId of KNOWN_ENGINE_IDS) {
     resolveSemanticEngineForEngineId(engineId, out)
+  }
+  return out
+}
+
+function parseExactEngineInpaintModes(payload: unknown): Record<string, InpaintMode[]> {
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error(`${CAPABILITIES_CONTRACT_ERROR_PREFIX} missing 'exact_engine_inpaint_modes' object.`)
+  }
+  const raw = payload as Record<string, unknown>
+  const out: Record<string, InpaintMode[]> = {}
+  for (const [keyRaw, valueRaw] of Object.entries(raw)) {
+    const engineId = String(keyRaw || '').trim().toLowerCase()
+    if (!engineId) {
+      throw new Error(`${CAPABILITIES_CONTRACT_ERROR_PREFIX} exact_engine_inpaint_modes has an empty key.`)
+    }
+    if (!Array.isArray(valueRaw)) {
+      throw new Error(`${CAPABILITIES_CONTRACT_ERROR_PREFIX} exact_engine_inpaint_modes['${engineId}'] must be an array.`)
+    }
+    const modes = valueRaw.map((entry, index) => {
+      if (typeof entry !== 'string') {
+        throw new Error(
+          `${CAPABILITIES_CONTRACT_ERROR_PREFIX} exact_engine_inpaint_modes['${engineId}'][${index}] must be a string.`,
+        )
+      }
+      const mode = entry.trim()
+      if (!mode) {
+        throw new Error(
+          `${CAPABILITIES_CONTRACT_ERROR_PREFIX} exact_engine_inpaint_modes['${engineId}'][${index}] must not be empty.`,
+        )
+      }
+      return parseCapabilityInpaintMode(
+        mode,
+        `exact_engine_inpaint_modes['${engineId}'][${index}]`,
+      )
+    })
+    out[engineId] = toUniqueNonEmptyStrings(modes) as InpaintMode[]
+  }
+  for (const engineId of KNOWN_ENGINE_IDS) {
+    if (!Object.prototype.hasOwnProperty.call(out, engineId)) {
+      throw new Error(`${CAPABILITIES_CONTRACT_ERROR_PREFIX} exact_engine_inpaint_modes is missing known engine id '${engineId}'.`)
+    }
   }
   return out
 }
@@ -374,6 +452,7 @@ export const useEngineCapabilitiesStore = defineStore('engineCapabilities', () =
   const assetContracts = ref<Record<string, EngineAssetContractVariants>>({})
   const dependencyChecks = ref<Record<string, EngineDependencyStatus>>({})
   const engineIdToSemanticEngine = ref<Record<string, string>>({})
+  const exactEngineInpaintModes = ref<Record<string, InpaintMode[]>>({})
   const loaded = ref(false)
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -398,12 +477,14 @@ export const useEngineCapabilitiesStore = defineStore('engineCapabilities', () =
         const nextDependencyChecks = parseDependencyChecks(res.dependency_checks)
         const nextEngineMap = parseEngineIdToSemanticMap(res.engine_id_to_semantic_engine)
         const nextFamilies = parseFamilyCapabilities(res.families)
+        const nextInpaintModes = parseExactEngineInpaintModes(res.exact_engine_inpaint_modes)
 
         engines.value = res.engines
         families.value = nextFamilies
         assetContracts.value = res.asset_contracts ?? {}
         dependencyChecks.value = nextDependencyChecks
         engineIdToSemanticEngine.value = nextEngineMap
+        exactEngineInpaintModes.value = nextInpaintModes
         loaded.value = true
       } catch (e: unknown) {
         const message = e instanceof Error ? e.message : String(e)
@@ -433,6 +514,13 @@ export const useEngineCapabilitiesStore = defineStore('engineCapabilities', () =
     return engines.value[semantic] ?? null
   }
 
+  function getInpaintModes(engineId: string | null | undefined): InpaintMode[] {
+    const key = String(engineId || '').trim().toLowerCase()
+    if (!key) return []
+    const modes = exactEngineInpaintModes.value[key]
+    return Array.isArray(modes) ? modes.slice() : []
+  }
+
   function getAssetVariants(engine: string | null | undefined): EngineAssetContractVariants | null {
     const semantic = semanticEngineForId(engine)
     if (!semantic) return null
@@ -443,6 +531,30 @@ export const useEngineCapabilitiesStore = defineStore('engineCapabilities', () =
     const semantic = semanticEngineForId(engine)
     if (!semantic) return null
     return dependencyChecks.value[semantic] ?? null
+  }
+
+  function getApplicableDependencyChecks(
+    engine: string | null | undefined,
+    opts: { inpaintMode?: string | null } = {},
+  ): EngineDependencyCheckRow[] {
+    const status = getDependencyStatus(engine)
+    if (!status) return []
+    const activeInpaintMode = String(opts.inpaintMode || '').trim()
+    return status.checks.filter((row) => {
+      const scopedModes = Array.isArray(row.inpaint_modes) ? row.inpaint_modes : []
+      if (scopedModes.length === 0) return true
+      if (!activeInpaintMode) return false
+      return scopedModes.includes(activeInpaintMode)
+    })
+  }
+
+  function isDependencyReady(
+    engine: string | null | undefined,
+    opts: { inpaintMode?: string | null } = {},
+  ): boolean {
+    const status = getDependencyStatus(engine)
+    if (!status) return false
+    return getApplicableDependencyChecks(engine, opts).every((row) => row.ok)
   }
 
   function getFamily(family: string | null | undefined): FamilyCapabilities | null {
@@ -457,10 +569,13 @@ export const useEngineCapabilitiesStore = defineStore('engineCapabilities', () =
     return getFamily(semantic)
   }
 
-  function firstDependencyError(engine: string | null | undefined): string {
+  function firstDependencyError(
+    engine: string | null | undefined,
+    opts: { inpaintMode?: string | null } = {},
+  ): string {
     const status = getDependencyStatus(engine)
     if (!status) return "Dependency checks are not available for this engine."
-    const first = status.checks.find((row) => !row.ok)
+    const first = getApplicableDependencyChecks(engine, opts).find((row) => !row.ok)
     return first?.message || ''
   }
 
@@ -502,6 +617,7 @@ export const useEngineCapabilitiesStore = defineStore('engineCapabilities', () =
     assetContracts,
     dependencyChecks,
     engineIdToSemanticEngine,
+    exactEngineInpaintModes,
     knownEngines,
     notReadyEngines,
     loaded,
@@ -510,10 +626,13 @@ export const useEngineCapabilitiesStore = defineStore('engineCapabilities', () =
     init,
     semanticEngineForId,
     get,
+    getInpaintModes,
     getFamily,
     getFamilyForEngine,
     getAssetVariants,
     getDependencyStatus,
+    getApplicableDependencyChecks,
+    isDependencyReady,
     firstDependencyError,
     getAssetContract,
     getLtxExecutionSurface,

@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Request→processing adapters for txt2img/img2img (hires/swap-model/refiner/smart flags).
 Builds Codex processing objects from API request DTOs, including Hires, first-pass swap-model, Refiner, IP-Adapter, and SUPIR mode configs (with hires
 tile config), per-job smart runtime flags, and strict pass-through overrides like `extras.er_sde` for sampler runtime wiring.
+The img2img adapter now transfers the canonical `inpaint_mode` owner into `CodexProcessingImg2Img` without aliasing removed `mask_enforcement` names.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_require_non_negative_int` (function): Validates an explicit integer `>= 0` for fail-loud request→processing transfer seams.
@@ -487,7 +488,7 @@ def build_img2img_processing(req: Img2ImgRequest) -> CodexProcessingImg2Img:
         seed=-1 if req.seed is None else int(req.seed),
         init_image=req.init_image,
         mask=req.mask,
-        mask_enforcement=getattr(req, "mask_enforcement", None),
+        inpaint_mode=getattr(req, "inpaint_mode", None),
         per_step_blend_strength=per_step_blend_strength,
         per_step_blend_steps=per_step_blend_steps,
         mask_region_split=bool(getattr(req, "mask_region_split", False)),

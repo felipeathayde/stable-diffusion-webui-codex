@@ -18,6 +18,8 @@ FLUX.2 img2img guidance emission is variant-aware (`img2img_cfg_scale` xor `img2
 shared with the canonical hires payload builder while remaining blocked for masked runs. Native SDXL SUPIR mode stays on the single nested frontend owner
 `params.supir` and is emitted only through `img2img_extras.supir` for truthful SDXL img2img/inpaint runs, with diagnostics-backed sampler metadata
 owning the effective runtime sampler/scheduler pair and fail-loud rejection of stale APG/advanced-guidance overlap.
+Masked img2img runtime selection now flows through strict `inpaintMode` / `img2img_inpaint_mode`, with exact-engine mode discoverability coming from
+`/api/engines/capabilities.exact_engine_inpaint_modes` and invalid stale values failing loud before submit.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ImageRunHistoryItem` (interface): Persisted per-tab run history entry (task id, status, summary, params snapshot, error message).
@@ -74,7 +76,7 @@ import type {
 } from '../api/types'
 import { resolveImageRequestEngineId } from '../utils/engine_taxonomy'
 import { buildExplicitImageRequestContract } from '../utils/image_request_contract'
-import { normalizeMaskEnforcement } from '../utils/image_params'
+import { parseInpaintMode } from '../utils/image_params'
 import { normalizeImg2ImgResizeModeForEngine } from '../utils/img2img_resize'
 import { formatSettingsRevisionConflictMessage, resolveSettingsRevisionConflict } from './settings_revision_conflict'
 import { resolveSupirSelectionState } from './useSupirDiagnostics'
@@ -493,14 +495,17 @@ export function buildImg2ImgPayload(args: BuildImg2ImgPayloadArgs): Record<strin
       throw new Error('INPAINT is enabled but no mask is applied. Open the mask editor and apply a mask.')
     }
     payload.img2img_mask = maskData
-    const maskEnforcement = normalizeMaskEnforcement(params.maskEnforcement)
-    payload.img2img_mask_enforcement = maskEnforcement
+    const inpaintMode = parseInpaintMode(params.inpaintMode)
+    if (inpaintMode === null) {
+      throw new Error(`INPAINT is enabled but inpaintMode '${String(params.inpaintMode ?? '')}' is invalid.`)
+    }
+    payload.img2img_inpaint_mode = inpaintMode
     payload.img2img_inpainting_fill = Math.max(0, Math.min(3, Math.trunc(Number(params.inpaintingFill))))
     payload.img2img_inpaint_full_res_padding = Math.max(0, Math.trunc(Number(params.inpaintFullResPadding)))
     payload.img2img_inpainting_mask_invert = maskInvert ? 1 : 0
     payload.img2img_mask_blur = Math.max(0, Math.trunc(Number(params.maskBlur)))
     payload.img2img_mask_round = maskRound
-    if (maskEnforcement === 'per_step_clamp') {
+    if (inpaintMode === 'per_step_blend') {
       const rawPerStepBlendStrength = Number(params.perStepBlendStrength)
       const perStepBlendStrength = Number.isFinite(rawPerStepBlendStrength)
         ? Math.max(0, Math.min(1, rawPerStepBlendStrength))
@@ -865,7 +870,7 @@ export function useGeneration(tabId: string) {
       denoiseStrength: p.denoiseStrength,
       useMask: p.useMask,
       maskImageName: p.maskImageName,
-      maskEnforcement: p.maskEnforcement,
+      inpaintMode: p.inpaintMode,
       perStepBlendStrength: p.perStepBlendStrength,
       perStepBlendSteps: p.perStepBlendSteps,
       inpaintFullResPadding: p.inpaintFullResPadding,

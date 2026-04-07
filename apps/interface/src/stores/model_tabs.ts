@@ -75,9 +75,15 @@ Symbols (top-level; keep in sync; no ghosts):
 - `normalizeWanParams` (function): Applies WAN-specific nested merge normalization for `high/low/video/assets` params, enforcing canonical WAN stage scheduler `simple`.
 - `shouldPersistWanStageSamplingBackfill` (function): Detects persisted WAN params requiring High/Low stage sampler/scheduler migration (`sampler='uni-pc bh2'`, `scheduler='simple'`).
 - `buildImageTopLevelBackfillPatch` (function): Builds a missing-top-level-only image-tab backfill patch from the normalized owner shape so hydration can persist absent canonical keys without widening into unrelated nested drift.
-- `normalizeImageParams` (function): Applies image-tab nested merge normalization (`hires/refiner`) with sampler/scheduler and mask-enforcement fallback.
+- `normalizeImageParams` (function): Applies image-tab nested merge normalization (`hires/refiner`) with sampler/scheduler and strict inpaint-mode reset.
 - `normalizeParamsForType` (function): Normalizes raw params payload based on tab type (shape checking; discards invalid fields).
 - `normalizeTab` (function): Normalizes a raw tab record (id/type/params/meta) into the store shape.
+- `syncImageSparsePersistHints` (function): Syncs sparse image-owner missing-key hints from normalized in-memory params.
+- `snapshotImageSparsePersistHints` (function): Captures sparse image-owner missing-key hints before a queued persist mutates them.
+- `restoreImageSparsePersistHints` (function): Restores sparse image-owner missing-key hints during rollback.
+- `markExplicitImagePersistKeys` (function): Marks image-owner keys explicitly touched by one local patch so sparse pruning does not erase them.
+- `pruneSparseImagePersistDefaults` (function): Removes server-missing sparse image-owner defaults from one persisted payload unless explicitly touched.
+- `applyPersistedImageSparsePersistHints` (function): Advances sparse image-owner missing-key hints only for the exact keys that just persisted successfully.
 - `cloneParamsForPersist` (function): Proxy-safe `structuredClone` boundary for params snapshots/payloads; throws typed serialization failures.
 - `restorePendingParamsSnapshot` (function): Restores tab params/meta from pending snapshot after failed persistence attempts.
 - `scheduleParamsPersist` (function): Schedules debounced `/api/ui/tabs/:id` params PATCH calls.
@@ -94,7 +100,7 @@ import { type EngineType, getEngineConfig, getEngineDefaults } from './engine_co
 import { useEngineCapabilitiesStore } from './engine_capabilities'
 import { fallbackSamplingDefaultsForTabFamily, normalizeTabFamily, type TabFamily } from '../utils/engine_taxonomy'
 import { DEFAULT_IMG2IMG_RESIZE_MODE, normalizeImg2ImgResizeMode, type Img2ImgResizeMode } from '../utils/img2img_resize'
-import { normalizeMaskEnforcement } from '../utils/image_params'
+import { parseInpaintMode } from '../utils/image_params'
 import {
   normalizeWanChunkOverlap,
   normalizeWanWindowCommit,
@@ -283,7 +289,7 @@ export interface ImageBaseParams {
   useMask: boolean
   maskImageData: string
   maskImageName: string
-  maskEnforcement: 'post_blend' | 'per_step_clamp'
+  inpaintMode: 'per_step_blend' | 'post_sample_blend' | 'fooocus_inpaint' | 'brushnet'
   perStepBlendStrength: number
   perStepBlendSteps: number
   inpaintFullResPadding: number
@@ -446,7 +452,7 @@ const IMAGE_PARAM_TOP_LEVEL_KEYS = new Set<string>([
   'useMask',
   'maskImageData',
   'maskImageName',
-  'maskEnforcement',
+  'inpaintMode',
   'perStepBlendStrength',
   'perStepBlendSteps',
   'inpaintFullResPadding',
@@ -458,6 +464,12 @@ const IMAGE_PARAM_TOP_LEVEL_KEYS = new Set<string>([
   'supir',
   'ipAdapter',
   'zimageTurbo',
+])
+const IMAGE_PARAM_NO_AUTOBACKFILL_KEYS = new Set<string>([
+  'inpaintMode',
+])
+const IMAGE_PARAM_SPARSE_PERSIST_DEFAULT_KEYS = new Set<string>([
+  'inpaintMode',
 ])
 
 const WAN_PARAM_TOP_LEVEL_KEYS = new Set<string>([
@@ -726,7 +738,7 @@ function defaultParams<T extends BaseTabType>(
     useMask: false,
     maskImageData: '',
     maskImageName: '',
-    maskEnforcement: 'per_step_clamp',
+    inpaintMode: 'per_step_blend',
     perStepBlendStrength: 1,
     perStepBlendSteps: 0,
     inpaintFullResPadding: 32,
@@ -1353,6 +1365,7 @@ function buildImageTopLevelBackfillPatch(
   const backfillPatch: Partial<ImageBaseParams> = {}
   let needsBackfill = false
   for (const key of IMAGE_PARAM_TOP_LEVEL_KEYS) {
+    if (IMAGE_PARAM_NO_AUTOBACKFILL_KEYS.has(key)) continue
     if (Object.prototype.hasOwnProperty.call(patch, key)) continue
     const normalizedValue = normalized[key as keyof ImageBaseParams]
     if (normalizedValue === undefined) continue
@@ -1517,9 +1530,9 @@ function normalizeImageParams(raw: unknown, defaults: ImageBaseParams): ImageBas
   if (typeof merged.scheduler !== 'string' || !merged.scheduler.trim()) {
     merged.scheduler = defaults.scheduler
   }
-  merged.maskEnforcement = normalizeMaskEnforcement(
-    typeof merged.maskEnforcement === 'string' ? merged.maskEnforcement : defaults.maskEnforcement,
-  )
+  merged.inpaintMode = parseInpaintMode(
+    typeof merged.inpaintMode === 'string' ? merged.inpaintMode : null,
+  ) ?? defaults.inpaintMode
   merged.perStepBlendStrength = clampFiniteNumber(merged.perStepBlendStrength, defaults.perStepBlendStrength, 0, 1)
   merged.perStepBlendSteps = Math.trunc(
     clampFiniteNumber(merged.perStepBlendSteps, defaults.perStepBlendSteps, 0),
@@ -1602,6 +1615,7 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
   const tabs = ref<BaseTab[]>([])
   const activeId = ref<string>('')
   const pendingParamsPersists = new Map<string, PendingParamsPersist>()
+  const imageSparsePersistMissingKeysByTabId = new Map<string, Set<string>>()
   let loadPromise: Promise<void> | null = null
 
   const PARAMS_PERSIST_DEBOUNCE_MS = 220
@@ -1620,9 +1634,102 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
     deferreds: PersistDeferred[]
     snapshotParams: Record<string, unknown> | null
     snapshotUpdatedAt: string
+    snapshotSparseMissingKeys: string[] | null
+    explicitImagePersistKeys: Set<string>
   }
 
   type PersistSerializationPhase = 'snapshot' | 'patch' | 'persist' | 'rollback'
+
+  function syncImageSparsePersistHints(tabId: string, tabType: BaseTabType, rawParams: unknown): void {
+    if (tabType === 'wan' || tabType === 'ltx2') {
+      imageSparsePersistMissingKeysByTabId.delete(tabId)
+      return
+    }
+    const rawPatch = asRecordObject(rawParams)
+    const missingKeys = new Set<string>()
+    for (const key of IMAGE_PARAM_SPARSE_PERSIST_DEFAULT_KEYS) {
+      if (!Object.prototype.hasOwnProperty.call(rawPatch, key)) {
+        missingKeys.add(key)
+      }
+    }
+    if (missingKeys.size === 0) {
+      imageSparsePersistMissingKeysByTabId.delete(tabId)
+      return
+    }
+    imageSparsePersistMissingKeysByTabId.set(tabId, missingKeys)
+  }
+
+  function snapshotImageSparsePersistHints(tabId: string): string[] | null {
+    const missingKeys = imageSparsePersistMissingKeysByTabId.get(tabId)
+    if (!missingKeys || missingKeys.size === 0) return null
+    return Array.from(missingKeys).sort()
+  }
+
+  function restoreImageSparsePersistHints(tabId: string, snapshot: string[] | null): void {
+    if (!snapshot || snapshot.length === 0) {
+      imageSparsePersistMissingKeysByTabId.delete(tabId)
+      return
+    }
+    imageSparsePersistMissingKeysByTabId.set(tabId, new Set(snapshot))
+  }
+
+  function markExplicitImagePersistKeys(
+    pending: PendingParamsPersist,
+    tabType: BaseTabType,
+    patch: Record<string, unknown>,
+  ): void {
+    if (tabType === 'wan' || tabType === 'ltx2') return
+    for (const key of IMAGE_PARAM_SPARSE_PERSIST_DEFAULT_KEYS) {
+      if (Object.prototype.hasOwnProperty.call(patch, key)) {
+        pending.explicitImagePersistKeys.add(key)
+      }
+    }
+  }
+
+  function pruneSparseImagePersistDefaults(
+    tabId: string,
+    tabType: BaseTabType,
+    params: Record<string, unknown>,
+    explicitKeys: ReadonlySet<string>,
+  ): Record<string, unknown> {
+    if (tabType === 'wan' || tabType === 'ltx2') return params
+    const missingKeys = imageSparsePersistMissingKeysByTabId.get(tabId)
+    if (!missingKeys || missingKeys.size === 0) return params
+    let prunedParams = params
+    const defaults = defaultImageParamsForType(tabType)
+    if (
+      missingKeys.has('inpaintMode') &&
+      !explicitKeys.has('inpaintMode') &&
+      Object.prototype.hasOwnProperty.call(prunedParams, 'inpaintMode') &&
+      prunedParams.inpaintMode === defaults.inpaintMode
+    ) {
+      prunedParams = { ...prunedParams }
+      delete prunedParams.inpaintMode
+    }
+    return prunedParams
+  }
+
+  function applyPersistedImageSparsePersistHints(
+    tabId: string,
+    tabType: BaseTabType,
+    explicitKeys: ReadonlySet<string>,
+  ): string[] | null {
+    if (tabType === 'wan' || tabType === 'ltx2') {
+      imageSparsePersistMissingKeysByTabId.delete(tabId)
+      return null
+    }
+    const nextMissingKeys = new Set(imageSparsePersistMissingKeysByTabId.get(tabId) ?? [])
+    for (const key of explicitKeys) {
+      nextMissingKeys.delete(key)
+    }
+    if (nextMissingKeys.size === 0) {
+      imageSparsePersistMissingKeysByTabId.delete(tabId)
+      return null
+    }
+    const snapshot = Array.from(nextMissingKeys).sort()
+    imageSparsePersistMissingKeysByTabId.set(tabId, new Set(snapshot))
+    return snapshot
+  }
 
   async function resolveRequiredTypesFromCapabilities(): Promise<BaseTabType[]> {
     const capsStore = useEngineCapabilitiesStore()
@@ -1781,11 +1888,15 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
 
   function restorePendingParamsSnapshot(tabId: string, tab: BaseTab, pending: PendingParamsPersist): void {
     if (pending.snapshotParams) {
-      tab.params = cloneParamsForPersist(tabId, 'rollback', pending.snapshotParams)
+      const rolledBackParams = cloneParamsForPersist(tabId, 'rollback', pending.snapshotParams)
+      tab.params = asParamsRecord(normalizeParamsForType(tab.type, rolledBackParams, defaultParamsForType(tab.type)))
     }
+    restoreImageSparsePersistHints(tabId, pending.snapshotSparseMissingKeys)
     tab.meta.updatedAt = pending.snapshotUpdatedAt
     pending.version = pending.persistedVersion
     pending.snapshotParams = null
+    pending.snapshotSparseMissingKeys = null
+    pending.explicitImagePersistKeys.clear()
   }
 
   function getPendingParamsPersist(tabId: string, tab: BaseTab): PendingParamsPersist {
@@ -1799,6 +1910,8 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
       deferreds: [],
       snapshotParams: null,
       snapshotUpdatedAt: tab.meta.updatedAt,
+      snapshotSparseMissingKeys: null,
+      explicitImagePersistKeys: new Set<string>(),
     }
     pendingParamsPersists.set(tabId, created)
     return created
@@ -1851,12 +1964,20 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
       return
     }
     let paramsToPersist: Record<string, unknown>
+    let normalizedParamsToPersist: Record<string, unknown>
+    const explicitImagePersistKeysToPersist = new Set(pending.explicitImagePersistKeys)
     const updatedAtSnapshot = tab.meta.updatedAt
     try {
       paramsToPersist = cloneParamsForPersist(tabId, 'persist', tab.params as Record<string, unknown>)
       const migratedParams = asParamsRecord(normalizeParamsForType(tab.type, paramsToPersist, defaultParamsForType(tab.type)))
-      paramsToPersist = cloneParamsForPersist(tabId, 'persist', migratedParams)
+      normalizedParamsToPersist = cloneParamsForPersist(tabId, 'persist', migratedParams)
       tab.params = cloneParamsForPersist(tabId, 'persist', migratedParams)
+      paramsToPersist = pruneSparseImagePersistDefaults(
+        tabId,
+        tab.type,
+        normalizedParamsToPersist,
+        explicitImagePersistKeysToPersist,
+      )
     } catch (error) {
       const mapped = error instanceof ModelTabsStoreError
         ? error
@@ -1877,16 +1998,26 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
     try {
       await updateTabApi(tabId, { params: paramsToPersist })
       pending.persistedVersion = versionToPersist
+      const persistedSparseMissingKeys = applyPersistedImageSparsePersistHints(
+        tabId,
+        tab.type,
+        explicitImagePersistKeysToPersist,
+      )
+      for (const key of explicitImagePersistKeysToPersist) {
+        pending.explicitImagePersistKeys.delete(key)
+      }
 
       const resolveList = pending.deferreds.filter((entry) => entry.version <= versionToPersist)
       pending.deferreds = pending.deferreds.filter((entry) => entry.version > versionToPersist)
       resolveList.forEach((entry) => entry.resolve())
 
       if (pending.version > pending.persistedVersion) {
-        pending.snapshotParams = paramsToPersist
+        pending.snapshotParams = normalizedParamsToPersist
         pending.snapshotUpdatedAt = updatedAtSnapshot
+        pending.snapshotSparseMissingKeys = persistedSparseMissingKeys
       } else {
         pending.snapshotParams = null
+        pending.snapshotSparseMissingKeys = null
         pending.snapshotUpdatedAt = tab.meta.updatedAt
       }
       save()
@@ -1954,6 +2085,7 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
         params,
         meta: { createdAt, updatedAt: createdAt },
       })
+      imageSparsePersistMissingKeysByTabId.delete(createdId)
       existing.add(type)
     }
   }
@@ -1990,11 +2122,13 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
       }
 
       const rawTabs = res.tabs as unknown[]
+      imageSparsePersistMissingKeysByTabId.clear()
       tabs.value = rawTabs.map((tab) => normalizeTab(tab as BaseTab, defaultParamsForType))
       for (let index = 0; index < rawTabs.length; index += 1) {
         const tab = tabs.value[index]
         const rawTab = asRecordObject(rawTabs[index])
         if (!tab) continue
+        syncImageSparsePersistHints(tab.id, tab.type, rawTab.params)
         if (tab.type === 'wan') {
           if (!shouldPersistWanStageSamplingBackfill(rawTab.params)) continue
           const params = tab.params as TabParamsByType['wan']
@@ -2013,22 +2147,8 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
         const normalizedParams = tab.params as unknown as ImageBaseParams
         const imageBackfillPatch = buildImageTopLevelBackfillPatch(rawTab.params, normalizedParams)
         if (!imageBackfillPatch) continue
-        let serializedBackfillPatch: Record<string, unknown>
-        try {
-          serializedBackfillPatch = cloneParamsForPersist(
-            tab.id,
-            'patch',
-            imageBackfillPatch as unknown as Record<string, unknown>,
-          )
-        } catch (error) {
-          console.warn('[model_tabs] Failed to serialize image-tab top-level params backfill; continuing load.', {
-            tabId: tab.id,
-            error,
-          })
-          continue
-        }
-        void updateTabApi(tab.id, { params: serializedBackfillPatch }).catch((error) => {
-          console.warn('[model_tabs] Failed to persist image-tab top-level params backfill; continuing load.', {
+        void updateParams<Record<string, unknown>>(tab.id, imageBackfillPatch as unknown as Record<string, unknown>).catch((error) => {
+          console.warn('[model_tabs] Failed to queue image-tab top-level params backfill; continuing load.', {
             tabId: tab.id,
             error,
           })
@@ -2070,6 +2190,7 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
       params,
       meta: { createdAt, updatedAt: createdAt },
     })
+    imageSparsePersistMissingKeysByTabId.delete(createdId)
     save()
     return createdId
   }
@@ -2090,6 +2211,7 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
     copy.meta.createdAt = nowIso()
     copy.meta.updatedAt = copy.meta.createdAt
     tabs.value.push(copy)
+    imageSparsePersistMissingKeysByTabId.delete(copy.id)
     save()
     return copy.id
   }
@@ -2105,6 +2227,7 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
       id,
       new ModelTabsStoreError('tab_not_found', `Tab not found: '${id}'.`, { details: { id } }),
     )
+    imageSparsePersistMissingKeysByTabId.delete(id)
     tabs.value = tabs.value.filter(t => t.id !== id)
     if (activeId.value === id) activeId.value = tabs.value[0]?.id ?? ''
     normalizeOrder()
@@ -2193,7 +2316,9 @@ export const useModelTabsStore = defineStore('modelTabs', () => {
     if (pending.snapshotParams === null) {
       pending.snapshotParams = cloneParamsForPersist(id, 'snapshot', current as unknown as Record<string, unknown>)
       pending.snapshotUpdatedAt = t.meta.updatedAt
+      pending.snapshotSparseMissingKeys = snapshotImageSparsePersistHints(id)
     }
+    markExplicitImagePersistKeys(pending, t.type, patchSnapshot)
 
     Object.assign(current, patchSnapshot)
     t.meta.updatedAt = nowIso()

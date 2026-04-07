@@ -15,10 +15,10 @@ sampling (Forge/A1111 “Only masked” semantics).
 Symbols (top-level; keep in sync; no ghosts):
 - `InpaintFullResPlan` (dataclass): Full-res inpaint plan (crop region + overlay composite inputs).
 - `MaskedImg2ImgBundle` (dataclass): Prepared init tensor/latents + latent masks + optional full-res plan.
-- `MaskEnforcerHooks` (dataclass): Centralized masked-enforcement hook set returned by `resolve_mask_enforcer_hooks(...)`.
-- `LatentMaskEnforcer` (class): Latent masking helper implementing post-blend and per-step clamp hooks.
+- `MaskEnforcerHooks` (dataclass): Centralized generic masked-runtime hook set returned by `resolve_mask_enforcer_hooks(...)`.
+- `LatentMaskEnforcer` (class): Latent masking helper implementing post-sample/per-step blend hooks.
 - `compute_mask_connected_component_bboxes` (function): Returns connected-component bounding boxes for a binary inpaint mask (for multi-region flows).
-- `resolve_mask_enforcer_hooks` (function): Resolve the runtime hook set for a validated mask-enforcement mode.
+- `resolve_mask_enforcer_hooks` (function): Resolve the runtime hook set for a validated generic inpaint mode.
 - `prepare_masked_img2img_bundle` (function): Build a masked img2img bundle from a processing object and sampling plan.
 - `apply_inpaint_full_res_composite` (function): Paste-back + overlay composite for full-res inpaint outputs.
 """
@@ -44,10 +44,10 @@ from apps.backend.runtime.pipeline_stages.image_io import pil_to_tensor
 _RESAMPLE_LANCZOS = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
 _RESAMPLE_NEAREST = Image.Resampling.NEAREST if hasattr(Image, "Resampling") else Image.NEAREST
 
-MaskEnforcementMode = str
-MASK_ENFORCEMENT_POST_BLEND = "post_blend"
-MASK_ENFORCEMENT_PER_STEP_CLAMP = "per_step_clamp"
-ALLOWED_MASK_ENFORCEMENTS = frozenset({MASK_ENFORCEMENT_POST_BLEND, MASK_ENFORCEMENT_PER_STEP_CLAMP})
+InpaintMode = str
+INPAINT_MODE_POST_SAMPLE_BLEND = "post_sample_blend"
+INPAINT_MODE_PER_STEP_BLEND = "per_step_blend"
+ALLOWED_INPAINT_MODES = frozenset({INPAINT_MODE_POST_SAMPLE_BLEND, INPAINT_MODE_PER_STEP_BLEND})
 
 
 @dataclass(slots=True)
@@ -82,7 +82,7 @@ class MaskEnforcerHooks:
 
 
 class LatentMaskEnforcer:
-    """Applies latent masking constraints (post-blend and/or per-step clamp)."""
+    """Applies latent masking constraints (post-sample blend and/or per-step blend)."""
 
     def __init__(
         self,
@@ -325,10 +325,10 @@ class LatentMaskEnforcer:
 def resolve_mask_enforcer_hooks(
     enforcer: LatentMaskEnforcer,
     *,
-    enforce_mode: MaskEnforcementMode,
+    enforce_mode: InpaintMode,
 ) -> MaskEnforcerHooks:
     enforcement_value = str(enforce_mode).strip()
-    if enforcement_value == MASK_ENFORCEMENT_PER_STEP_CLAMP:
+    if enforcement_value == INPAINT_MODE_PER_STEP_BLEND:
         if enforcer.uses_total_per_step_blend():
             return MaskEnforcerHooks(
                 pre_denoiser=enforcer.pre_denoiser,
@@ -339,7 +339,7 @@ def resolve_mask_enforcer_hooks(
             post_step=enforcer.post_step,
             post_sample=enforcer.post_sample,
         )
-    if enforcement_value == MASK_ENFORCEMENT_POST_BLEND:
+    if enforcement_value == INPAINT_MODE_POST_SAMPLE_BLEND:
         return MaskEnforcerHooks(post_sample=enforcer.post_sample)
     raise ValueError(f"Unknown mask enforcement '{enforcement_value}' (internal validation bug)")
 
@@ -575,11 +575,11 @@ def _preserved_region_scaffold(*, image: Image.Image, mask: Image.Image) -> Imag
 
 
 def _fill_masked_regions(image: Image.Image, *, mask: Image.Image) -> Image.Image:
-    """Best-effort masked-region fill (blur-smear) used for `inpainting_fill` parity."""
+    """Forge/A1111-parity masked-region fill (blur-smear) for `inpainting_fill`."""
     base = Image.new("RGBA", image.size, (0, 0, 0, 0))
     scaffold = _preserved_region_scaffold(image=image, mask=mask)
 
-    for radius, repeats in ((128, 1), (32, 1), (16, 1), (8, 2), (4, 4), (2, 2), (0, 1)):
+    for radius, repeats in ((256, 1), (64, 1), (16, 2), (4, 4), (2, 2), (0, 1)):
         blurred = scaffold.filter(ImageFilter.GaussianBlur(radius)).convert("RGBA")
         for _ in range(repeats):
             base.alpha_composite(blurred)
@@ -606,11 +606,11 @@ def _latent_mask_from_image(
     return tensor
 
 
-def _validate_mask_enforcement(mode: Any) -> MaskEnforcementMode:
+def _validate_inpaint_mode(mode: Any) -> InpaintMode:
     value = str(mode or "").strip()
-    if value not in ALLOWED_MASK_ENFORCEMENTS:
+    if value not in ALLOWED_INPAINT_MODES:
         raise ValueError(
-            f"Invalid mask_enforcement '{value}'. Allowed: {sorted(ALLOWED_MASK_ENFORCEMENTS)}"
+            f"Invalid inpaint_mode '{value}'. Allowed: {sorted(ALLOWED_INPAINT_MODES)}"
         )
     return value
 
@@ -637,7 +637,7 @@ def prepare_masked_img2img_bundle(
     if raw_mask is None:
         raise ValueError("masked img2img requires processing.mask")
 
-    _validate_mask_enforcement(enforce_mode)
+    _validate_inpaint_mode(enforce_mode)
 
     width = int(getattr(processing, "width", 0) or 0)
     height = int(getattr(processing, "height", 0) or 0)
@@ -775,7 +775,7 @@ def prepare_masked_img2img_bundle(
 
         noise_scaling = _predictor_noise_scaling
 
-    if str(enforce_mode).strip() == MASK_ENFORCEMENT_PER_STEP_CLAMP:
+    if str(enforce_mode).strip() == INPAINT_MODE_PER_STEP_BLEND:
         processing.update_extra_param("Per-step blend strength", float(per_step_blend_strength))
         processing.update_extra_param(
             "Per-step blend steps",
@@ -819,13 +819,13 @@ def apply_inpaint_full_res_composite(
 
 
 __all__ = [
-    "ALLOWED_MASK_ENFORCEMENTS",
+    "ALLOWED_INPAINT_MODES",
     "compute_mask_connected_component_bboxes",
     "InpaintFullResPlan",
     "LatentMaskEnforcer",
     "MaskEnforcerHooks",
-    "MASK_ENFORCEMENT_PER_STEP_CLAMP",
-    "MASK_ENFORCEMENT_POST_BLEND",
+    "INPAINT_MODE_PER_STEP_BLEND",
+    "INPAINT_MODE_POST_SAMPLE_BLEND",
     "MaskedImg2ImgBundle",
     "apply_inpaint_full_res_composite",
     "prepare_masked_img2img_bundle",

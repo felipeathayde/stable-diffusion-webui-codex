@@ -41,7 +41,7 @@ Symbols (top-level; keep in sync; no ghosts):
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useWorkflowsStore } from '../stores/workflows'
-import { useModelTabsStore, type BaseTabType } from '../stores/model_tabs'
+import { defaultImageParamsForType, useModelTabsStore, type BaseTabType, type ImageTabType } from '../stores/model_tabs'
 
 const router = useRouter()
 const tabs = useModelTabsStore()
@@ -70,7 +70,15 @@ async function restore(itemId: string): Promise<void> {
       createdTabId = await tabs.create(wf.type as BaseTabType, wf.name)
       targetTabId = createdTabId
     }
-    await tabs.updateParams(targetTabId, wf.params_snapshot)
+    const paramsSnapshot = { ...wf.params_snapshot }
+    if (
+      wf.type !== 'wan' &&
+      wf.type !== 'ltx2' &&
+      !Object.prototype.hasOwnProperty.call(paramsSnapshot, 'inpaintMode')
+    ) {
+      paramsSnapshot.inpaintMode = defaultImageParamsForType(wf.type as ImageTabType).inpaintMode
+    }
+    await tabs.updateParams(targetTabId, paramsSnapshot)
     if (wf.source_tab_id !== targetTabId) {
       await workflows.updateSnapshot(wf.id, { source_tab_id: targetTabId })
     }

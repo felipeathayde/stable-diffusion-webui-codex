@@ -19,6 +19,8 @@ is the selector-only second-pass replacement seam, and `extras.refiner` / `extra
 Hires supports sampler/scheduler overrides for the hires pass (txt2img: `extras.hires.sampler` / `extras.hires.scheduler`; img2img: `img2img_hires_sampling` / `img2img_hires_scheduler`) and validates override compatibility at API parse-time.
 Img2img masking uses Forge/A1111 “Only masked” semantics only (no whole-picture inpaint area), supports optional multi-region inpaint passes via
 `img2img_mask_region_split`, and is rejected at request time when the active engine capability surface does not support mask/inpaint semantics.
+The public masked-runtime field is now `img2img_inpaint_mode`; the router rejects removed `img2img_mask_enforcement`, validates exact-engine mode support,
+and preflights SDXL Fooocus/BrushNet assets before task creation.
 Includes strict ER-SDE/guidance option parsing (`extras.er_sde` / `img2img_extras.er_sde`, `extras.guidance` / `img2img_extras.guidance`) plus release-scope
 enforcement for sampler fields. Image-request sampler/scheduler validation also enforces family-scoped `supported_*` / `excluded_*` capability contracts
 (base pair + hires overrides) without promoting recommendation hints into allowlists.
@@ -193,12 +195,13 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         "img2img_inpainting_fill",
         "img2img_inpainting_mask_invert",
         "img2img_mask",
+        "img2img_mask_enforcement",
         "img2img_mask_blur",
         "img2img_mask_blur_x",
         "img2img_mask_blur_y",
         "img2img_per_step_blend_strength",
         "img2img_per_step_blend_steps",
-        "img2img_mask_enforcement",
+        "img2img_inpaint_mode",
         "img2img_mask_region_split",
         "img2img_mask_round",
         "img2img_neg_prompt",
@@ -2568,6 +2571,14 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             return
         raise HTTPException(status_code=400, detail=detail)
 
+    def _enforce_img2img_inpaint_mode_support(*, engine_key: str, mode: str) -> None:
+        from apps.backend.runtime.model_registry.capabilities import inpaint_mode_support_error
+
+        detail = inpaint_mode_support_error(engine_key, mode)
+        if detail is None:
+            return
+        raise HTTPException(status_code=400, detail=detail)
+
     def _reject_supir_prompt_loras(*, prompt: str, negative_prompt: str) -> None:
         from apps.backend.runtime.text_processing.extra_nets import ExtraNetsParseError, parse_prompts
 
@@ -4542,7 +4553,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     detail=public_http_error_detail(exc, fallback="Invalid 'img2img_mask' payload"),
                 ) from None
 
-        mask_enforcement = None
+        inpaint_mode = None
         inpainting_fill = 1
         inpaint_full_res_padding = 32
         inpainting_mask_invert = 0
@@ -4555,19 +4566,23 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
         per_step_blend_steps = 0
 
         if mask_image is not None:
-            raw_enforcement = payload.get("img2img_mask_enforcement")
-            if not isinstance(raw_enforcement, str) or not raw_enforcement.strip():
+            if "img2img_mask_enforcement" in payload:
                 raise HTTPException(
                     status_code=400,
-                    detail="'img2img_mask_enforcement' is required when 'img2img_mask' is provided",
+                    detail="'img2img_mask_enforcement' was removed; use 'img2img_inpaint_mode'.",
                 )
-            mask_enforcement = raw_enforcement.strip()
-            if mask_enforcement not in ("post_blend", "per_step_clamp"):
+            raw_inpaint_mode = payload.get("img2img_inpaint_mode")
+            if not isinstance(raw_inpaint_mode, str) or not raw_inpaint_mode.strip():
                 raise HTTPException(
                     status_code=400,
-                    detail="Invalid 'img2img_mask_enforcement' (allowed: post_blend, per_step_clamp)",
+                    detail="'img2img_inpaint_mode' is required when 'img2img_mask' is provided",
                 )
-
+            inpaint_mode = raw_inpaint_mode.strip()
+            if inpaint_mode not in ("post_sample_blend", "per_step_blend", "fooocus_inpaint", "brushnet"):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid 'img2img_inpaint_mode' (allowed: per_step_blend, post_sample_blend, fooocus_inpaint, brushnet)",
+                )
             if "img2img_inpainting_fill" in payload:
                 inpainting_fill = _require_int_field(payload, "img2img_inpainting_fill")
             if inpainting_fill not in (0, 1, 2, 3):
@@ -4595,10 +4610,10 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                 raise HTTPException(status_code=400, detail="'img2img_mask_blur' must be >= 0")
 
             if "img2img_per_step_blend_strength" in payload:
-                if mask_enforcement != "per_step_clamp":
+                if inpaint_mode != "per_step_blend":
                     raise HTTPException(
                         status_code=400,
-                        detail="'img2img_per_step_blend_strength' requires 'img2img_mask_enforcement' = 'per_step_clamp'",
+                        detail="'img2img_per_step_blend_strength' requires 'img2img_inpaint_mode' = 'per_step_blend'",
                     )
                 per_step_blend_strength = _require_float_field(
                     payload,
@@ -4607,10 +4622,10 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
                     maximum=1.0,
                 )
             if "img2img_per_step_blend_steps" in payload:
-                if mask_enforcement != "per_step_clamp":
+                if inpaint_mode != "per_step_blend":
                     raise HTTPException(
                         status_code=400,
-                        detail="'img2img_per_step_blend_steps' requires 'img2img_mask_enforcement' = 'per_step_clamp'",
+                        detail="'img2img_per_step_blend_steps' requires 'img2img_inpaint_mode' = 'per_step_blend'",
                     )
                 per_step_blend_steps = _require_int_field(
                     payload,
@@ -4623,9 +4638,13 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             if "img2img_mask_region_split" in payload:
                 mask_region_split = _require_bool_field(payload, "img2img_mask_region_split")
         else:
-            raw_enforcement = payload.get("img2img_mask_enforcement")
-            if isinstance(raw_enforcement, str) and raw_enforcement.strip():
-                raise HTTPException(status_code=400, detail="'img2img_mask_enforcement' requires 'img2img_mask'")
+            if "img2img_inpaint_mode" in payload:
+                raise HTTPException(status_code=400, detail="'img2img_inpaint_mode' requires 'img2img_mask'")
+            if "img2img_mask_enforcement" in payload:
+                raise HTTPException(
+                    status_code=400,
+                    detail="'img2img_mask_enforcement' was removed; use 'img2img_inpaint_mode'.",
+                )
             if "img2img_per_step_blend_strength" in payload:
                 raise HTTPException(
                     status_code=400,
@@ -4666,6 +4685,31 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             sampler_field_name="img2img_sampling",
             scheduler_field_name="img2img_scheduler",
         )
+        if mask_image is not None and inpaint_mode is not None:
+            _enforce_img2img_inpaint_mode_support(engine_key=engine_key, mode=inpaint_mode)
+            if inpaint_mode in {"fooocus_inpaint", "brushnet"}:
+                extras_raw = payload.get("img2img_extras")
+                if isinstance(extras_raw, Mapping):
+                    supir_cfg = extras_raw.get("supir")
+                    if isinstance(supir_cfg, Mapping) and bool(supir_cfg.get("enabled")):
+                        raise HTTPException(
+                            status_code=400,
+                            detail=(
+                                f"'img2img_inpaint_mode' = '{inpaint_mode}' cannot be combined with "
+                                "'img2img_extras.supir'."
+                            ),
+                        )
+                try:
+                    if inpaint_mode == "fooocus_inpaint":
+                        from apps.backend.runtime.families.sd.fooocus_inpaint import resolve_fooocus_inpaint_assets
+
+                        resolve_fooocus_inpaint_assets()
+                    else:
+                        from apps.backend.runtime.families.sd.brushnet import resolve_brushnet_assets
+
+                        resolve_brushnet_assets()
+                except Exception as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from None
         seed_val = core.seed
         clip_skip = core.clip_skip
         noise_source = core.noise_source
@@ -4947,6 +4991,13 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             field_prefix="img2img_extras",
             models_api=_models_api,
         )
+        if inpaint_mode == "fooocus_inpaint":
+            try:
+                from apps.backend.runtime.families.sd.fooocus_inpaint import ensure_fooocus_checkpoint_supported
+
+                ensure_fooocus_checkpoint_supported(checkpoint_record)
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from None
 
         _apply_asset_contract_to_extras(
             engine_id=engine_id,
@@ -5001,7 +5052,7 @@ def build_router(*, codex_root: Path, media, live_preview, opts_get, opts_snapsh
             metadata=metadata,
             init_image=init_image,
             mask=mask_image,
-            mask_enforcement=mask_enforcement,
+            inpaint_mode=inpaint_mode,
             per_step_blend_strength=per_step_blend_strength,
             per_step_blend_steps=per_step_blend_steps,
             mask_region_split=mask_region_split,

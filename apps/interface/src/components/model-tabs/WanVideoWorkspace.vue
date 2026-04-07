@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Reference-only WAN source video workspace retained during the baseline-owner cutover.
 This file preserves the copied WAN source implementation so `VideoModelTab.vue` can stay the sole live owner while still being provably mechanical.
 Runtime/body logic here is not a live owner surface; only maintenance-only compatibility/truth sync is allowed while the reference remains in-tree.
+That truth-sync includes keeping the embedded shared img2img-card wiring aligned with the live `inpaintMode` contract.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `WanVideoWorkspace` (component): Reference-only WAN source video workspace retained during the cutover.
@@ -159,7 +160,7 @@ Symbols (top-level; keep in sync; no ghosts):
               :useMask="false"
               maskImageData=""
               maskImageName=""
-              maskEnforcement="per_step_clamp"
+              inpaintMode="per_step_blend"
               :inpaintingFill="1"
               :inpaintFullResPadding="0"
               :maskBlur="0"

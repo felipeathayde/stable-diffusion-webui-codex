@@ -12,6 +12,7 @@ Purpose: UI persistence and metadata API routes.
     Normalizes WAN tab aliases (`wan22`, `wan22_5b`, `wan22_14b`, `wan22_14b_animate`) into the canonical UI `wan` tab type, keeps workflow
     snapshot payloads/source-tab bindings normalized and unique, and accepts a dedicated `ltx2` video workspace tab type. Image-tab persistence
     also owns the allowlist for nested automation-era params such as `runAction`, `initSource`, `supir`, and `ipAdapter`.
+    Image-tab top-level persistence now keeps `inpaintMode` as the only masked runtime-mode owner; removed `maskEnforcement` values must not round-trip.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `build_router` (function): Build the APIRouter for UI endpoints.
@@ -145,6 +146,7 @@ def build_router(
     # ------------------------------------------------------------------
     # Tabs & Workflows Persistence (JSON files)
     _ALLOWED_TAB_TYPES = {"sd15", "sdxl", "flux1", "flux2", "chroma", "zimage", "wan", "anima", "ltx2"}
+    _IMAGE_TAB_TYPES = _ALLOWED_TAB_TYPES - {"wan", "ltx2"}
     _IMAGE_PARAM_TOP_LEVEL_KEYS = {
         "schemaVersion",
         "prompt",
@@ -176,7 +178,7 @@ def build_router(
         "useMask",
         "maskImageData",
         "maskImageName",
-        "maskEnforcement",
+        "inpaintMode",
         "perStepBlendStrength",
         "perStepBlendSteps",
         "inpaintFullResPadding",
@@ -188,6 +190,15 @@ def build_router(
         "supir",
         "ipAdapter",
         "zimageTurbo",
+    }
+    _IMAGE_INPAINT_MODES = {
+        "per_step_blend",
+        "post_sample_blend",
+        "fooocus_inpaint",
+        "brushnet",
+    }
+    _REMOVED_IMAGE_PARAM_KEYS = {
+        "maskEnforcement": "inpaintMode",
     }
     _WAN_PARAM_TOP_LEVEL_KEYS = {
         "schemaVersion",
@@ -285,8 +296,21 @@ def build_router(
         raw_params: object,
         field: str = "params",
         reject_unknown: bool = True,
+        reject_removed_image_keys: bool = False,
+        scrub_invalid_inpaint_mode: bool = False,
     ) -> Dict[str, Any]:
         params_patch = _assert_plain_object(raw_params, field=field)
+        if tab_type in _IMAGE_TAB_TYPES:
+            removed_image_keys = sorted(
+                key for key in params_patch.keys() if key in _REMOVED_IMAGE_PARAM_KEYS
+            )
+            if removed_image_keys and reject_removed_image_keys:
+                removed_key = removed_image_keys[0]
+                replacement = _REMOVED_IMAGE_PARAM_KEYS[removed_key]
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{field}.{removed_key} was removed; use {field}.{replacement}.",
+                )
         allowed = _allowed_param_keys(tab_type)
         unknown_keys = sorted(key for key in params_patch.keys() if key not in allowed)
         if unknown_keys and reject_unknown:
@@ -312,7 +336,20 @@ def build_router(
             sanitized["textEncoders"], list
         ):
             raise HTTPException(status_code=400, detail=f"{field}.textEncoders must be an array")
+        if tab_type in _IMAGE_TAB_TYPES and "inpaintMode" in sanitized:
+            inpaint_mode = sanitized.get("inpaintMode")
+            if not isinstance(inpaint_mode, str) or inpaint_mode not in _IMAGE_INPAINT_MODES:
+                if not scrub_invalid_inpaint_mode:
+                    allowed_modes = ", ".join(sorted(_IMAGE_INPAINT_MODES))
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"{field}.inpaintMode must be one of: {allowed_modes}",
+                    )
+                sanitized.pop("inpaintMode", None)
         return sanitized
+
+    def _reject_unknown_live_param_keys(tab_type: str) -> bool:
+        return tab_type in _IMAGE_TAB_TYPES or tab_type == "ltx2"
 
     def _sanitize_stored_tab_params(*, tab_type: str, raw_params: object, tab_id: str) -> Dict[str, Any]:
         if raw_params is None:
@@ -323,6 +360,8 @@ def build_router(
                 raw_params=raw_params,
                 field="params",
                 reject_unknown=False,
+                reject_removed_image_keys=False,
+                scrub_invalid_inpaint_mode=True,
             )
         except HTTPException as exc:
             raise HTTPException(
@@ -470,6 +509,7 @@ def build_router(
                 raw_params=raw_params,
                 field="params_snapshot",
                 reject_unknown=(workflow_type == "ltx2"),
+                scrub_invalid_inpaint_mode=True,
             )
         except HTTPException as exc:
             raise HTTPException(
@@ -620,7 +660,8 @@ def build_router(
                 tab_type=ttype,
                 raw_params=payload.get("params"),
                 field="params",
-                reject_unknown=(ttype == "ltx2"),
+                reject_unknown=_reject_unknown_live_param_keys(ttype),
+                reject_removed_image_keys=True,
             )
         else:
             params = {}
@@ -663,7 +704,8 @@ def build_router(
                         tab_type=tab_type,
                         raw_params=payload.get("params"),
                         field="params",
-                        reject_unknown=(tab_type == "ltx2"),
+                        reject_unknown=_reject_unknown_live_param_keys(tab_type),
+                        reject_removed_image_keys=True,
                     )
                     sanitized_current_params = _sanitize_stored_tab_params(
                         tab_type=tab_type,
@@ -738,7 +780,8 @@ def build_router(
             tab_type=wtype,
             raw_params=raw_params_snapshot,
             field="params_snapshot",
-            reject_unknown=(wtype == "ltx2"),
+            reject_unknown=_reject_unknown_live_param_keys(wtype),
+            reject_removed_image_keys=True,
         )
         _assert_unique_workflow_source_tab_id(wfs, source_tab_id)
         now = datetime.utcnow().isoformat()
@@ -782,7 +825,8 @@ def build_router(
                         tab_type=workflow_type,
                         raw_params=payload["params_snapshot"],
                         field="params_snapshot",
-                        reject_unknown=(workflow_type == "ltx2"),
+                        reject_unknown=_reject_unknown_live_param_keys(workflow_type),
+                        reject_removed_image_keys=True,
                     )
                 elif "params_snapshot" in payload:
                     raise HTTPException(status_code=400, detail="params_snapshot must be an object")

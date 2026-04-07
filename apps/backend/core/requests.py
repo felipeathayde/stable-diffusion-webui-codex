@@ -8,6 +8,7 @@ Required Notice: see NOTICE
 
 Purpose: Typed request and event objects for backend engines/orchestration.
 Defines progress/result events plus request payload dataclasses for image, video, and image-automation tasks, including strict settings-revision propagation fields used by API contract validation and orchestration.
+`Img2ImgRequest` now carries masked runtime selection under `inpaint_mode` (not `mask_enforcement`) for the canonical img2img/inpaint owner path.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `ProgressEvent` (dataclass): Progress update event (stage/percent/step + optional metadata).
@@ -100,7 +101,7 @@ class Txt2ImgRequest(BaseRequest):
 class Img2ImgRequest(BaseRequest):
     init_image: Any = None
     mask: Any = None
-    mask_enforcement: Optional[str] = None
+    inpaint_mode: Optional[str] = None
     per_step_blend_strength: float = 1.0
     per_step_blend_steps: int | None = None
     mask_region_split: bool = False

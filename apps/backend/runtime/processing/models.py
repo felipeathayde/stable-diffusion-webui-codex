@@ -9,6 +9,7 @@ Required Notice: see NOTICE
 Purpose: Processing model dataclasses (txt2img/img2img) used by engine runtimes and orchestration.
 Defines the stable “processing” parameter containers (hires, first-pass swap stages, refiner, IP-Adapter, SUPIR mode + common fields) and helpers
 that normalize list-like inputs so per-batch runs have consistent lengths.
+`CodexProcessingImg2Img` now carries masked runtime selection under `inpaint_mode`, including exact-engine SDXL accessory branches like Fooocus.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_repeat_to_length` (function): Expands/truncates a sequence to a target length (used for per-batch list normalization).
@@ -558,7 +559,7 @@ class CodexProcessingImg2Img(CodexProcessingBase):
     inpainting_fill: int = 0
     inpaint_full_res_padding: int = 0
     inpainting_mask_invert: int = 0
-    mask_enforcement: Optional[str] = None
+    inpaint_mode: Optional[str] = None
     mask_region_split: bool = False
     initial_noise_multiplier: Optional[float] = None
     latent_mask: Any = None

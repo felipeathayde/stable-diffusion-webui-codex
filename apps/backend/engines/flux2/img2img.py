@@ -14,7 +14,7 @@ is requested instead of pretending SD-family `image_conditioning` semantics appl
 clean `image_latents` plus sampler-native continuation from `init_latent`, and unmasked hires reuses shared hires prep
 while keeping masked hires fail-loud; hires prompt parsing is LoRA-only, base/request LoRAs stay inherited unless prompt-local hires tags
 override them, explicit hires request overrides stay request-owned, the wrapper seeds a per-run progress-owner token before pre-sampling
-VAE encode begins, and the shared mask-enforcement hook owner is reused instead of re-implementing it here.
+VAE encode begins, and the shared generic inpaint-mode hook owner is reused instead of re-implementing it here.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `_resolve_flux2_sampling_inputs` (function): Resolves noise/init-latent/denoise args for FLUX.2 continuation sampling.
@@ -399,7 +399,7 @@ def generate_flux2_img2img(
     full_res_plan = None
     encode_seed = resolve_processing_encode_seed(processing)
     if processing.has_mask():
-        enforcement = getattr(processing, "mask_enforcement", None)
+        enforcement = getattr(processing, "inpaint_mode", None)
         masked_bundle, enforcer = prepare_masked_img2img_bundle(
             processing,
             plan,

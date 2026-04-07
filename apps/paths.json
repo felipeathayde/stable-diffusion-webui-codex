@@ -23,6 +23,12 @@
   "sdxl_loras": [
     "models/sdxl-loras"
   ],
+  "sdxl_fooocus_inpaint": [
+    "models/fooocus-inpaint-sdxl"
+  ],
+  "sdxl_brushnet": [
+    "models/tencentarc-brushnet-sdxl"
+  ],
   "flux1_ckpt": [
     "models/flux"
   ],

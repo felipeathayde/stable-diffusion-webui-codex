@@ -838,7 +838,7 @@ def _resolve_sdxl_brushnet_layer_targets(diffusion_model: Any) -> tuple[list[tor
         (8, ResBlock),
     ]
     input_layers = [
-        _resolve_block_layer(diffusion_model.input_blocks, block_index=block_index, layer_type=layer_type, label="input")
+        _resolve_block_layer(blocks=diffusion_model.input_blocks, block_index=block_index, layer_type=layer_type, label="input")
         for block_index, layer_type in input_specs
     ]
     middle_layer = _resolve_layer_from_block(
@@ -847,7 +847,7 @@ def _resolve_sdxl_brushnet_layer_targets(diffusion_model: Any) -> tuple[list[tor
         label="middle",
     )
     output_layers = [
-        _resolve_block_layer(diffusion_model.output_blocks, block_index=block_index, layer_type=layer_type, label="output")
+        _resolve_block_layer(blocks=diffusion_model.output_blocks, block_index=block_index, layer_type=layer_type, label="output")
         for block_index, layer_type in output_specs
     ]
     return input_layers, middle_layer, output_layers

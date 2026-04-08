@@ -146,24 +146,16 @@ Symbols (top-level; keep in sync; no ghosts):
 
         <div v-if="mode === 'img2vid'" class="gen-card">
           <div id="wan-guided-init-image">
-            <Img2ImgInpaintParamsCard
+            <InitialImageBlock
               embedded
               :disabled="isRunning"
               sectionTitle="Img2Vid Parameters"
               sectionSubtitle="Initial image"
               initImageLabel="Image"
+              :showFrameGuideEditor="true"
               :initImageData="video.initImageData"
               :initImageName="video.initImageName"
-              :imageWidth="video.width"
-              :imageHeight="video.height"
               :zoomFrameGuide="wanInitImageZoomFrameGuide"
-              :useMask="false"
-              maskImageData=""
-              maskImageName=""
-              inpaintMode="per_step_blend"
-              :inpaintingFill="1"
-              :inpaintFullResPadding="0"
-              :maskBlur="0"
               @set:initImage="onInitImageFile"
               @clear:initImage="clearInit"
               @reject:initImage="onInitImageRejected"
@@ -730,7 +722,7 @@ import { useModelTabsStore, type TabByType, type WanAssetsParams, type WanStageP
 import type { SamplerInfo, SchedulerInfo, GeneratedImage } from '../../api/types'
 import { fetchSamplers, fetchSchedulers } from '../../api/client'
 import ResultViewer from '../../components/ResultViewer.vue'
-import Img2ImgInpaintParamsCard from '../../components/Img2ImgInpaintParamsCard.vue'
+import InitialImageBlock from '../../components/InitialImageBlock.vue'
 import VideoSettingsCard from '../../components/VideoSettingsCard.vue'
 import ResultsCard from '../../components/results/ResultsCard.vue'
 import RunCard from '../../components/results/RunCard.vue'

@@ -6,10 +6,9 @@ License: PolyForm Noncommercial 1.0.0
 SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 Required Notice: see NOTICE
 
-Purpose: Presentational parameter card for image init/mask workflows.
-Groups img2img controls (initial image upload or folder-backed `DIR|IMG` source selection) and optional inpaint controls (canvas-mask tools + inpaint-mode/per-step blend strength/steps/fill + masked padding + mask blur + invert/region-splitting toggles),
-including dropzone/thumb/zoom handling for init images, nested `initSource` patch emits for parent state, rejected-file pass-through emits for parent toasts, and optional
-embedded/title/label overrides so non-image tabs can reuse the same card shell without duplicating UI logic.
+Purpose: Unified public owner for live initial-image workflow surfaces.
+Groups the shared constrained init-image preview/upload block with optional source-mode controls, optional inpaint controls,
+and optional WAN frame-guide support so img2img/inpaint and img2vid can mount one parameterized owner instead of separate card components.
 When `Per-step blend` is active, the strength/step-limit sliders share one proportional desktop row instead of stacking as separate full-width rows.
 Supports optional pass-through WAN zoom frame-guide config for init-image overlays.
 Saved inpaint masks can preview their effective mask, outward blur-spill range, and effective masked-region crop directly on the init-image thumbnail, anchored to the same image-bounds wrapper as the base preview, with footer legend copy that makes the final blue crop box explicit in the UI.
@@ -17,9 +16,12 @@ Keeps `Split mask regions` / `Invert mask` interlocked in the card and suppresse
 Init-image filename captions are centered in the footer area for clearer media identification.
 
 Symbols (top-level; keep in sync; no ghosts):
-- `Img2ImgInpaintParamsCard` (component): Presentational card for img2img/inpaint parameter controls.
+- `InitialImageBlock` (component): Unified initial-image owner for img2img/inpaint and img2vid surfaces.
 - `SOURCE_MODE_OPTIONS` (constant): Segmented-control options for init-image source mode switching.
-- `initSource` (prop): Nested init-image source owner (`DIR|IMG` + folder settings) rendered by the card.
+- `showSourceModeToggle` (prop): Controls whether `DIR|IMG` source ownership is exposed in the block header.
+- `showInpaintControls` (prop): Controls whether inpaint editor/runtime controls are available in the block.
+- `showFrameGuideEditor` (prop): Controls whether WAN frame-guide metadata is forwarded to the zoom overlay.
+- `initSource` (prop): Nested init-image source owner (`DIR|IMG` + folder settings) rendered when source-mode toggling is enabled.
 - `INPAINT_PARAMETER_TOOLTIPS` (constant): Tooltip copy for inpaint select, slider, and split-toggle controls.
 - `perStepBlendStrength` (prop): Scales how strongly `Per-step blend` restores preserved outside-mask content each outer sampling step.
 - `perStepBlendSteps` (prop): Limits how many outer sampling steps `Per-step blend` stays active before the final preserved-content close.
@@ -40,31 +42,36 @@ Symbols (top-level; keep in sync; no ghosts):
 -->
 
 <template>
-  <div :class="['gen-card', { 'gen-card--embedded': embedded }, 'img2img-params-card']">
-    <WanSubHeader :title="sectionTitle">
-      <template v-if="sectionSubtitle" #subtitle>
-        <span class="caption">{{ sectionSubtitle }}</span>
-      </template>
-      <CompactSegmentedControl
-        :modelValue="initSource.mode"
-        :options="SOURCE_MODE_OPTIONS"
-        :disabled="disabled"
-        ariaLabel="Initial image source mode"
-        @update:modelValue="(value) => emit('patch:initSource', { mode: value as InitSourceFormState['mode'] })"
-      />
-    </WanSubHeader>
+  <div :class="['gen-card', { 'gen-card--embedded': embedded }, 'initial-image-block']">
+    <div class="initial-image-block__header">
+      <div class="initial-image-block__header-main">
+        <span class="initial-image-block__title">{{ sectionTitle }}</span>
+        <span v-if="sectionSubtitle" class="caption">{{ sectionSubtitle }}</span>
+      </div>
+      <div v-if="showSourceModeToggle || $slots['header-actions']" class="initial-image-block__header-actions">
+        <slot name="header-actions" />
+        <CompactSegmentedControl
+          v-if="showSourceModeToggle"
+          :modelValue="effectiveInitSource.mode"
+          :options="SOURCE_MODE_OPTIONS"
+          :disabled="disabled"
+          ariaLabel="Initial image source mode"
+          @update:modelValue="(value) => emit('patch:initSource', { mode: value as InitSourceFormState['mode'] })"
+        />
+      </div>
+    </div>
 
     <InitialImageCard
-      v-if="initSource.mode === 'img'"
+      v-if="effectiveInitSource.mode === 'img'"
       :label="initImageLabel"
       :src="initImageData"
-      :has-image="Boolean(initImageData)"
+      :has-image="hasInitImage"
       :disabled="disabled"
       :dropzone="true"
       :thumbnail="true"
       :zoomable="true"
-      :preview-click-action="useMask ? 'emit' : 'zoom'"
-      :zoom-frame-guide="zoomFrameGuide"
+      :preview-click-action="shouldUseMaskPreviewClick ? 'emit' : 'zoom'"
+      :zoom-frame-guide="showFrameGuideEditor ? zoomFrameGuide : null"
       @set="(file) => emit('set:initImage', file)"
       @clear="() => emit('clear:initImage')"
       @rejected="(payload) => emit('reject:initImage', payload)"
@@ -72,11 +79,11 @@ Symbols (top-level; keep in sync; no ghosts):
       @update:zoom-frame-guide="onZoomFrameGuideUpdate"
     >
       <template #dropzone-actions>
-        <div v-if="useMask" class="img2img-mask-editor-actions">
+        <div v-if="shouldShowMaskUi" class="initial-image-block__mask-editor-actions">
           <button
             class="btn btn-sm btn-outline"
             type="button"
-      :disabled="disabled || !maskImageData"
+            :disabled="disabled || !maskImageData"
             @click.stop.prevent="emit('clear:maskImage')"
           >
             Clear mask
@@ -84,63 +91,65 @@ Symbols (top-level; keep in sync; no ghosts):
         </div>
       </template>
       <template #preview-overlay>
-        <div v-if="previewOverlaySource || previewCropStyle" class="img2img-mask-preview-layers">
+        <div v-if="shouldShowMaskUi && (previewOverlaySource || previewCropStyle)" class="initial-image-block__mask-preview-layers">
           <img
             v-if="previewOverlaySource"
-            class="img2img-mask-preview-overlay-image"
+            class="initial-image-block__mask-preview-overlay-image"
             :src="previewOverlaySource"
             alt=""
             aria-hidden="true"
           >
-          <div v-if="previewCropStyle" class="img2img-mask-preview-crop-box" :style="previewCropStyle" />
+          <div v-if="previewCropStyle" class="initial-image-block__mask-preview-crop-box" :style="previewCropStyle" />
         </div>
       </template>
       <template #footer>
-        <div v-if="useMask && (previewOverlaySource || previewCropStyle)" class="img2img-preview-legend">
-          <span v-if="previewOverlaySource" class="caption img2img-preview-legend__item">
-            <span class="img2img-preview-legend__swatch img2img-preview-legend__swatch--mask" aria-hidden="true" />
+        <div v-if="showPreviewLegend" class="initial-image-block__preview-legend">
+          <span v-if="previewOverlaySource" class="caption initial-image-block__preview-legend__item">
+            <span class="initial-image-block__preview-legend__swatch initial-image-block__preview-legend__swatch--mask" aria-hidden="true" />
             <span>Mask</span>
           </span>
-          <span v-if="previewHasBlurSpill" class="caption img2img-preview-legend__item">
-            <span class="img2img-preview-legend__swatch img2img-preview-legend__swatch--blur" aria-hidden="true" />
+          <span v-if="previewHasBlurSpill" class="caption initial-image-block__preview-legend__item">
+            <span class="initial-image-block__preview-legend__swatch initial-image-block__preview-legend__swatch--blur" aria-hidden="true" />
             <span>Blur range</span>
           </span>
           <HoverTooltip
             v-if="previewCropStyle"
-            class="img2img-preview-legend__tooltip"
+            class="initial-image-block__preview-legend__tooltip"
             :title="INPAINT_PARAMETER_TOOLTIPS.previewCrop.title"
             :content="INPAINT_PARAMETER_TOOLTIPS.previewCrop.content"
           >
-            <span class="caption img2img-preview-legend__item img2img-preview-legend__item--interactive">
-              <span class="img2img-preview-legend__swatch img2img-preview-legend__swatch--crop" aria-hidden="true" />
+            <span class="caption initial-image-block__preview-legend__item initial-image-block__preview-legend__item--interactive">
+              <span class="initial-image-block__preview-legend__swatch initial-image-block__preview-legend__swatch--crop" aria-hidden="true" />
               <span>Final inpaint crop</span>
               <span class="cdx-slider-field__label-help" aria-hidden="true">?</span>
             </span>
           </HoverTooltip>
         </div>
-        <p v-if="initImageName" class="caption img2img-caption img2img-caption--init-name">{{ initImageName }}</p>
+        <p v-if="initImageName" class="caption initial-image-block__caption initial-image-block__caption--init-name">{{ initImageName }}</p>
       </template>
     </InitialImageCard>
 
-      <ImageFolderSourceFields
-        v-else
-        :source="initSource"
-        :showUseCrop="true"
-        :disabled="disabled"
-        pathLabel="Folder path"
-        pathPlaceholder="input/img2img-source"
-        countLabel="Images to generate"
-        @patch:source="(value) => emit('patch:initSource', value)"
-      />
+    <ImageFolderSourceFields
+      v-else
+      :source="effectiveInitSource"
+      :showUseCrop="true"
+      :disabled="disabled"
+      pathLabel="Folder path"
+      pathPlaceholder="input/img2img-source"
+      countLabel="Images to generate"
+      @patch:source="(value) => emit('patch:initSource', value)"
+    />
 
-    <div v-if="useMask && initSource.mode === 'img'" class="img2img-mask-stack">
+    <slot />
+
+    <div v-if="shouldShowMaskUi" class="initial-image-block__mask-stack">
       <WanSubHeader title="Inpaint Parameters">
         <template #subtitle>
           <span class="caption">Canvas mask tools + runtime parameters</span>
         </template>
       </WanSubHeader>
 
-      <div class="gc-row img2img-mask-grid">
+      <div class="gc-row initial-image-block__mask-grid">
         <div class="field">
           <label class="label-muted">
             <HoverTooltip
@@ -182,8 +191,8 @@ Symbols (top-level; keep in sync; no ghosts):
           </select>
         </div>
 
-        <div class="gc-col gc-col--presets img2img-mask-toggle-col">
-          <div class="img2img-mask-toggle-stack">
+        <div class="gc-col gc-col--presets initial-image-block__mask-toggle-col">
+          <div class="initial-image-block__mask-toggle-stack">
             <HoverTooltip
               class="cdx-slider-field__label-tooltip"
               :title="INPAINT_PARAMETER_TOOLTIPS.splitMaskRegions.title"
@@ -221,7 +230,7 @@ Symbols (top-level; keep in sync; no ghosts):
         </div>
       </div>
 
-      <div v-if="inpaintMode === 'per_step_blend'" class="gc-row img2img-mask-slider-row">
+      <div v-if="inpaintMode === 'per_step_blend'" class="gc-row initial-image-block__mask-slider-row">
         <SliderField
           class="gc-col gc-col--wide"
           label="Per-step blend strength"
@@ -252,7 +261,7 @@ Symbols (top-level; keep in sync; no ghosts):
         />
       </div>
 
-      <div class="gc-row img2img-mask-slider-row">
+      <div class="gc-row initial-image-block__mask-slider-row">
         <SliderField
           class="gc-col gc-col--wide"
           label="Masked padding"
@@ -286,7 +295,7 @@ Symbols (top-level; keep in sync; no ghosts):
     </div>
 
     <InpaintMaskEditorOverlay
-      v-if="initSource.mode === 'img'"
+      v-if="shouldShowMaskUi"
       v-model="maskEditorOpen"
       :init-image-data="initImageData"
       :initial-mask-data="maskImageData"
@@ -443,21 +452,24 @@ const props = withDefaults(defineProps<{
   sectionTitle?: string
   sectionSubtitle?: string
   initImageLabel?: string
+  showSourceModeToggle?: boolean
+  showInpaintControls?: boolean
+  showFrameGuideEditor?: boolean
   initSource?: InitSourceFormState
   initImageData?: string
   initImageName?: string
-  imageWidth: number
-  imageHeight: number
-  useMask: boolean
+  imageWidth?: number
+  imageHeight?: number
+  useMask?: boolean
   maskImageData?: string
   maskImageName?: string
-  inpaintMode: InpaintMode
+  inpaintMode?: InpaintMode
   inpaintModeOptions?: Array<{ value: InpaintMode; label: string }>
   perStepBlendStrength?: number
   perStepBlendSteps?: number
-  inpaintingFill: number
-  inpaintFullResPadding: number
-  maskBlur: number
+  inpaintingFill?: number
+  inpaintFullResPadding?: number
+  maskBlur?: number
   maskInvert?: boolean
   maskRegionSplit?: boolean
   processingWidth?: number
@@ -466,9 +478,12 @@ const props = withDefaults(defineProps<{
 }>(), {
   disabled: false,
   embedded: false,
-  sectionTitle: 'Img2Img Parameters',
+  sectionTitle: 'Initial Image',
   sectionSubtitle: 'Initial image',
   initImageLabel: 'Initial Image',
+  showSourceModeToggle: false,
+  showInpaintControls: false,
+  showFrameGuideEditor: false,
   initSource: () => ({
     mode: 'img',
     folderPath: '',
@@ -480,14 +495,22 @@ const props = withDefaults(defineProps<{
   }),
   initImageData: '',
   initImageName: '',
+  imageWidth: 0,
+  imageHeight: 0,
+  useMask: false,
   maskImageData: '',
   maskImageName: '',
   inpaintMode: 'per_step_blend',
   inpaintModeOptions: () => [],
   perStepBlendStrength: 1,
   perStepBlendSteps: 0,
+  inpaintingFill: 1,
+  inpaintFullResPadding: 0,
+  maskBlur: 0,
   maskInvert: false,
   maskRegionSplit: false,
+  processingWidth: 0,
+  processingHeight: 0,
   zoomFrameGuide: null,
 })
 
@@ -517,6 +540,29 @@ const previewOverlaySource = ref('')
 const previewHasBlurSpill = ref(false)
 let previewOverlayRenderRafId = 0
 let previewOverlayCanvas: HTMLCanvasElement | null = null
+
+const effectiveInitSource = computed<InitSourceFormState>(() => {
+  if (props.showSourceModeToggle) return props.initSource
+  return {
+    mode: 'img',
+    folderPath: '',
+    selectionMode: 'all',
+    count: 1,
+    order: 'sorted',
+    sortBy: 'name',
+    useCrop: false,
+  }
+})
+
+const hasInitImage = computed(() => Boolean(String(props.initImageData || '').trim()))
+
+const shouldShowMaskUi = computed(() => (
+  props.showInpaintControls
+    && props.useMask
+    && effectiveInitSource.value.mode === 'img'
+))
+
+const shouldUseMaskPreviewClick = computed(() => shouldShowMaskUi.value)
 
 const hasNaturalImageDimensions = computed(() => {
   const imageWidth = Math.trunc(Number(props.imageWidth))
@@ -566,7 +612,7 @@ const previewGeometry = computed(() => {
       maskedPadding: props.inpaintFullResPadding,
     })
   } catch (error) {
-    console.error('[Img2ImgInpaintParamsCard] Failed to compute inpaint preview geometry.', error)
+    console.error('[InitialImageBlock] Failed to compute inpaint preview geometry.', error)
     return null
   }
 })
@@ -583,6 +629,11 @@ const previewCropStyle = computed<CSSProperties | null>(() => {
     height: `${(geometry.cropRegion.height / imageHeight) * 100}%`,
   }
 })
+
+const showPreviewLegend = computed(() => (
+  shouldShowMaskUi.value
+    && (Boolean(previewOverlaySource.value) || Boolean(previewCropStyle.value))
+))
 
 watch(
   [() => props.maskImageData, () => props.imageWidth, () => props.imageHeight],
@@ -609,7 +660,7 @@ watch(
         if (previewMaskDecodeToken.value !== token) return
         previewMaskPlane.value = null
         previewHasBlurSpill.value = false
-        console.error('[Img2ImgInpaintParamsCard] Failed to decode saved mask preview.', error)
+        console.error('[InitialImageBlock] Failed to decode saved mask preview.', error)
       })
   },
   { immediate: true },
@@ -708,7 +759,7 @@ function renderPreviewOverlaySource(): void {
   } catch (error) {
     previewOverlaySource.value = ''
     previewHasBlurSpill.value = false
-    console.error('[Img2ImgInpaintParamsCard] Failed to render inpaint thumbnail preview source.', error)
+    console.error('[InitialImageBlock] Failed to render inpaint thumbnail preview source.', error)
   }
 }
 
@@ -725,7 +776,7 @@ function onMaskEditorApply(maskDataUrl: string): void {
 }
 
 function onInitPreviewClick(): void {
-  if (props.disabled || props.initSource.mode !== 'img' || !props.initImageData) return
+  if (props.disabled || !shouldShowMaskUi.value || effectiveInitSource.value.mode !== 'img' || !props.initImageData) return
   if (!hasNaturalImageDimensions.value) {
     emit('notice:maskEditorReset', 'Mask editor unavailable: init image dimensions are unavailable.')
     return
@@ -742,6 +793,7 @@ function onMaskEditorExternalReset(message: string): void {
 }
 
 function onZoomFrameGuideUpdate(value: WanImg2VidFrameGuideConfig): void {
+  if (!props.showFrameGuideEditor) return
   emit('update:zoomFrameGuide', value)
 }
 
@@ -799,4 +851,4 @@ const showUnsupportedActiveInpaintMode = computed(() => (
 ))
 </script>
 
-<!-- styles in styles/components/img2img-inpaint-params-card.css -->
+<!-- styles in styles/components/initial-image-block.css -->

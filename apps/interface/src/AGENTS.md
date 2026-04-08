@@ -1,7 +1,7 @@
 <!-- tags: frontend, interface-src, overview -->
 # apps/interface/src Overview
 Date: 2025-10-28
-Last Review: 2026-04-03
+Last Review: 2026-04-08
 Status: Active
 
 ## Purpose
@@ -37,7 +37,7 @@ Status: Active
 - 2026-02-06: Added hard-fatal bootstrap orchestration (`stores/bootstrap.ts`) with root App loader/fatal retry gating; App now blocks partial UI until required startup dependencies load.
 - 2026-02-21: `App.vue` bootstrap/fatal screen styles were moved from local `<style scoped>` into shared stylesheet `styles/components/bootstrap-screen.css` (imported via `styles.css`).
 - 2026-02-08: SDXL swap-model UX now uses explicit step-pointer semantics across src (`swapAtStep` in stores/UI, serialized as `switch_at_step` in API payloads) to avoid confusion with literal SDXL refiner “step count”.
-- 2026-02-08: `ImageModelTab.vue` now composes `components/Img2ImgInpaintParamsCard.vue` for detailed init-image/inpaint controls; shared normalization moved to `utils/image_params.ts`.
+- 2026-04-08: `ImageModelTab.vue` now composes `components/InitialImageBlock.vue` for the live img2img/inpaint initial-image surface; shared init-image cleanup/normalization still lives in `utils/image_params.ts`, and the public owner split with the video init-image card is gone.
 - 2026-02-08: Hires controls now follow the Basic Parameters row organization, are hidden in img2img mode by policy, and txt2img hires prompt overrides now fallback to base prompts when blank.
 - 2026-02-17: Top navigation removed `models`/`xyz`, added `/gallery` placeholder route/tab, and moved XYZ workflow into an embeddable card used inside image-tab Generation Parameters (with `/xyz` kept as compatibility wrapper).
 - 2026-03-02: `App.vue` top navigation no longer renders the `settings` link and now excludes `chroma` model tabs from the dynamic nav list; routes/contracts remain intact.

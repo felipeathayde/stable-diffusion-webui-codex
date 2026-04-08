@@ -108,8 +108,10 @@ Symbols (top-level; keep in sync; no ghosts):
         :fieldsId="`image-modeltab-prompt-${tabId}`"
       >
         <div v-if="supportsImg2Img && params.useInitImage" class="panel-section">
-          <Img2ImgInpaintParamsCard
+          <InitialImageBlock
             :disabled="isRunning"
+            :showSourceModeToggle="true"
+            :showInpaintControls="true"
             :initSource="params.initSource"
             :initImageData="params.initImageData"
             :initImageName="params.initImageName"
@@ -623,7 +625,7 @@ import {
 import BasicParametersCard from '../components/BasicParametersCard.vue'
 import HiresSettingsCard from '../components/HiresSettingsCard.vue'
 import Img2ImgBasicParametersCard from '../components/Img2ImgBasicParametersCard.vue'
-import Img2ImgInpaintParamsCard from '../components/Img2ImgInpaintParamsCard.vue'
+import InitialImageBlock from '../components/InitialImageBlock.vue'
 import IpAdapterCard from '../components/IpAdapterCard.vue'
 import PromptCard from '../components/prompt/PromptCard.vue'
 import RefinerSettingsCard from '../components/RefinerSettingsCard.vue'

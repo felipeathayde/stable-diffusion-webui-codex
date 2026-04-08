@@ -95,9 +95,9 @@
           "rationale": "Runtime-measured menu geometry for the batch settings dropdown."
         },
         {
-          "file": "apps/interface/src/components/Img2ImgInpaintParamsCard.vue",
+          "file": "apps/interface/src/components/InitialImageBlock.vue",
           "expression": "previewCropStyle",
-          "rationale": "Image-space crop box projection for the inpaint preview overlay."
+          "rationale": "Image-space crop box projection for the initial-image inpaint preview overlay."
         },
         {
           "file": "apps/interface/src/views/VideoModelTab.vue",

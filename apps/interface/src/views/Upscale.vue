@@ -38,6 +38,7 @@ Symbols (top-level; keep in sync; no ghosts):
             :disabled="isRunning"
             :src="imagePreview"
             :hasImage="Boolean(imageFile)"
+            :thumbnail="true"
             accept="image/*"
             placeholder="Select an image to upscale."
             @set="onImageSet"

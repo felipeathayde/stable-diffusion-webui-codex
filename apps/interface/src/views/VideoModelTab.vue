@@ -73,9 +73,13 @@ Symbols (top-level; keep in sync; no ghosts):
                 />
               </div>
 
-              <div v-if="wan.mode === 'img2vid'" class="mt-3">
-                <VideoInitImageCard
+              <div v-if="wan.mode === 'img2vid'" id="wan-guided-init-image" class="mt-3">
+                <InitialImageBlock
                   :disabled="wan.isRunning"
+                  sectionTitle="Img2Vid Parameters"
+                  sectionSubtitle="Initial image"
+                  initImageLabel="Image"
+                  :showFrameGuideEditor="true"
                   :initImageData="wan.video.initImageData"
                   :initImageName="wan.video.initImageName"
                   :zoomFrameGuide="wan.wanInitImageZoomFrameGuide"
@@ -878,8 +882,11 @@ Symbols (top-level; keep in sync; no ghosts):
               />
 
               <div v-if="ltx.mode === 'img2vid'" class="mt-3">
-                <VideoInitImageCard
+                <InitialImageBlock
                   :disabled="ltx.isRunning"
+                  sectionTitle="Img2Vid Parameters"
+                  sectionSubtitle="Initial image"
+                  initImageLabel="Image"
                   :initImageData="ltx.params.initImageData"
                   :initImageName="ltx.params.initImageName"
                   @set:initImage="ltx.onInitImageFile"
@@ -1119,7 +1126,7 @@ import { computed, type ComponentPublicInstance } from 'vue'
 
 import ResultViewer from '../components/ResultViewer.vue'
 import VideoCoreParamsCard from '../components/video/VideoCoreParamsCard.vue'
-import VideoInitImageCard from '../components/video/VideoInitImageCard.vue'
+import InitialImageBlock from '../components/InitialImageBlock.vue'
 import VideoOutputCard from '../components/video/VideoOutputCard.vue'
 import VideoPromptStageCard from '../components/video/VideoPromptStageCard.vue'
 import VideoStageBasicParamsCard from '../components/video/VideoStageBasicParamsCard.vue'

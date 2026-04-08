@@ -29,7 +29,7 @@ export const STYLE_TOPOLOGY = Object.freeze([
   styleEntry('apps/interface/src/styles.css', 'root-entry', 'Sole runtime CSS entry imported by src/main.ts.'),
   styleEntry('apps/interface/src/styles/components/generation-settings-card.css', 'component'),
   styleEntry('apps/interface/src/styles/components/img2img-basic-parameters-card.css', 'component'),
-  styleEntry('apps/interface/src/styles/components/img2img-inpaint-params-card.css', 'component'),
+  styleEntry('apps/interface/src/styles/components/initial-image-block.css', 'component'),
   styleEntry('apps/interface/src/styles/components/hires-settings-card.css', 'component'),
   styleEntry('apps/interface/src/styles/components/refiner-settings-card.css', 'component'),
   styleEntry('apps/interface/src/styles/components/result-viewer.css', 'component'),

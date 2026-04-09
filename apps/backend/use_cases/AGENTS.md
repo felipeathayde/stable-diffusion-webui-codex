@@ -1,6 +1,6 @@
 # apps/backend/use_cases Overview
 Date: 2025-10-30
-Last Review: 2026-04-06
+Last Review: 2026-04-08
 Status: Active
 
 ## Purpose
@@ -27,6 +27,7 @@ Status: Active
 - 2026-01-02: Added standardized file header docstrings to use case modules (doc-only change; part of rollout).
 - 2026-01-03: Added standardized file header docstrings to remaining use case modules (`__init__.py`, `img2vid.py`, `txt2img.py`, `txt2vid.py`) (doc-only change; part of rollout).
 - 2026-01-26: Smart offload pre-conditioning cleanup now ensures denoiser/VAE are not left resident when conditioning starts (txt2img runner + img2img).
+- 2026-04-08: `img2img.py` exact-engine SDXL inpaint now installs a temporary `_codex_exact_inpaint_sampling_session_factory` only around non-SUPIR `execute_sampling(...)` callsites. `sampling_execute.py` consumes that factory after canonical LoRA apply/reset and before the IP-Adapter stage so Fooocus/BrushNet patch the real live sampling snapshot instead of the pre-LoRA active snapshot.
 - 2026-04-06: `img2img.py` now treats masked runtime selection as `inpaint_mode`. The generic shared branch still owns `per_step_blend` / `post_sample_blend`, while exact-engine SDXL `fooocus_inpaint` and `brushnet` branch request-scoped patching through `runtime/families/sd/fooocus_inpaint.py` and `runtime/families/sd/brushnet.py` before the same canonical masked sampling path. Flux Kontext still fails loud when a mask is provided.
 - 2026-04-05: Z-Image remains the only live classic-flow masked img2img exception, but it does **not** use SD-style `image_conditioning` / `c_concat`. `img2img.py` must keep `prepare_masked_img2img_bundle(..., include_image_conditioning=False)` on the flow backend and rely on latent-mask enforcement only.
 - 2026-04-06: `img2img.py` generic masked runtime still owns only `per_step_blend` and `post_sample_blend`; `per_step_blend` wires Forge-style denoiser-adjacent hooks (`pre_denoiser` + `post_denoiser`) plus post-sample clamp, while exact-engine modes like SDXL `fooocus_inpaint` branch request-scoped behavior before reusing the same canonical masked sampling path.

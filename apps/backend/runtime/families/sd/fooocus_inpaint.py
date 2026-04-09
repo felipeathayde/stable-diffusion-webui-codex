@@ -9,7 +9,7 @@ Required Notice: see NOTICE
 Purpose: Request-scoped Fooocus inpaint patch session for SDXL masked img2img.
 Resolves pinned Fooocus assets (`fooocus_inpaint_head.pth` + `inpaint_v26.fooocus.patch`) from the dedicated SDXL root,
 builds the inpaint-head feature from the prepared masked latent bundle, patches a cloned SDXL denoiser for one sampling pass,
-and restores baseline Codex objects afterwards.
+honors the global LoRA apply mode for its patch registration, and restores the pre-session denoiser patch registry afterwards.
 
 Symbols (top-level; keep in sync; no ghosts):
 - `FooocusInpaintAssets` (dataclass): Exact pinned Fooocus asset paths for the active repo/workspace.
@@ -41,6 +41,7 @@ from typing import Iterator, Mapping
 import torch
 import torch.nn.functional as F
 
+from apps.backend.infra.config.lora_apply_mode import LoraApplyMode, read_lora_apply_mode
 from apps.backend.infra.config.paths import get_paths_for
 from apps.backend.patchers.lora_registry import extra_weight_calculators
 from apps.backend.runtime.adapters.lora import model_lora_keys_unet
@@ -174,44 +175,58 @@ def apply_fooocus_inpaint_for_sampling(*, processing, masked_bundle: MaskedImg2I
         raise RuntimeError(f"Fooocus Inpaint requires exact engine id 'sdxl'; got '{engine_id or '<empty>'}'.")
     assets = resolve_fooocus_inpaint_assets()
     previous_codex_objects = engine.codex_objects
+    previous_denoiser = previous_codex_objects.denoiser
     patched_codex_objects = previous_codex_objects.shallow_copy()
-    patched_denoiser = previous_codex_objects.denoiser.clone()
-    runtime_device, _runtime_dtype = _resolve_runtime_device_and_dtype(patched_denoiser=patched_denoiser)
-    inpaint_head = _load_inpaint_head(assets.head_path, device=runtime_device)
-    inpaint_feature = _build_inpaint_feature(
-        masked_bundle=masked_bundle,
-        inpaint_head=inpaint_head,
-        device=runtime_device,
-    )
-    patched_denoiser.set_model_input_block_patch(_build_input_block_patch(inpaint_feature))
-    patch_state = _load_patch_state(assets.patch_path)
-    target_model = getattr(patched_denoiser, "model", None)
-    if target_model is None:
-        raise RuntimeError("Fooocus Inpaint requires a cloned denoiser exposing '.model'.")
-    target_map = model_lora_keys_unet(target_model, {})
-    target_map.update({key: key for key in target_model.state_dict().keys()})
-    patch_dict = _build_patch_dict(loaded_patch=patch_state, target_map=target_map)
-    _ensure_fooocus_calculator_registered()
-    patched = patched_denoiser.add_patches(filename=assets.patch_path, patches=patch_dict)
-    patched_denoiser.refresh_loras()
-    not_patched = sorted(str(key) for key in patch_dict.keys() if key not in patched)
-    if not_patched:
-        raise RuntimeError(
-            "Fooocus Inpaint patch failed to bind all resolved weights. "
-            f"Unpatched keys: {', '.join(not_patched[:16])}"
-        )
-    patched_codex_objects.denoiser = patched_denoiser
-    engine.codex_objects = patched_codex_objects
-    logger.info(
-        "Applying Fooocus Inpaint for engine=%s head=%s patch=%s",
-        engine_id,
-        assets.head_path,
-        assets.patch_path,
-    )
+    patched_denoiser = previous_denoiser.clone()
     try:
+        runtime_device, _runtime_dtype = _resolve_runtime_device_and_dtype(patched_denoiser=patched_denoiser)
+        inpaint_head = _load_inpaint_head(assets.head_path, device=runtime_device)
+        inpaint_feature = _build_inpaint_feature(
+            masked_bundle=masked_bundle,
+            inpaint_head=inpaint_head,
+            device=runtime_device,
+        )
+        patched_denoiser.set_model_input_block_patch(_build_input_block_patch(inpaint_feature))
+        patch_state = _load_patch_state(assets.patch_path)
+        target_model = getattr(patched_denoiser, "model", None)
+        if target_model is None:
+            raise RuntimeError("Fooocus Inpaint requires a cloned denoiser exposing '.model'.")
+        target_map = model_lora_keys_unet(target_model, {})
+        target_map.update({key: key for key in target_model.state_dict().keys()})
+        patch_dict = _build_patch_dict(loaded_patch=patch_state, target_map=target_map)
+        _ensure_fooocus_calculator_registered()
+        apply_mode = read_lora_apply_mode()
+        online_mode = apply_mode is LoraApplyMode.ONLINE
+        patched = patched_denoiser.add_patches(
+            filename=assets.patch_path,
+            patches=patch_dict,
+            online_mode=online_mode,
+        )
+        patched_denoiser.refresh_loras()
+        not_patched = sorted(str(key) for key in patch_dict.keys() if key not in patched)
+        if not_patched:
+            raise RuntimeError(
+                "Fooocus Inpaint patch failed to bind all resolved weights. "
+                f"Unpatched keys: {', '.join(not_patched[:16])}"
+            )
+        patched_codex_objects.denoiser = patched_denoiser
+        engine.codex_objects = patched_codex_objects
+        logger.info(
+            "Applying Fooocus Inpaint for engine=%s head=%s patch=%s apply_mode=%s",
+            engine_id,
+            assets.head_path,
+            assets.patch_path,
+            apply_mode.value,
+        )
         yield assets
     finally:
         engine.codex_objects = previous_codex_objects
+        try:
+            previous_denoiser.refresh_loras()
+        except Exception as exc:
+            raise RuntimeError(
+                "Fooocus Inpaint cleanup failed while restoring the pre-session denoiser patch registry."
+            ) from exc
 
 
 def _resolve_unique_asset_path(*, roots: list[str], filename: str) -> str:

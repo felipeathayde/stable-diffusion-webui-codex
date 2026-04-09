@@ -1,7 +1,7 @@
 <!-- tags: webui, architecture, map, discovery, backend -->
 # WebUI Subsystem Map
-Date: 2026-04-06
-Last Review: 2026-04-06
+Date: 2026-04-08
+Last Review: 2026-04-08
 Status: Active
 
 ## Purpose / ownership boundary
@@ -127,13 +127,13 @@ Status: Active
 | Orchestrator | `apps/backend/core/orchestrator.py` | Resolves engine/load/cache state and dispatches to the mode wrapper. | engine `img2img(...)` wrapper |
 | Engine wrapper | `apps/backend/engines/common/base.py` | Delegates to the canonical img2img use-case. | `run_img2img(...)` |
 | Canonical use-case | `apps/backend/use_cases/img2img.py` | Owns classic-family dispatch, init-image planning, prompt/sampling plans, optional native SUPIR mode, optional masked img2img, exact-engine SDXL Fooocus/BrushNet branching, and optional hires continuation. | shared stage helpers + sampler |
-| Shared stage helpers | `apps/backend/runtime/pipeline_stages/masked_img2img.py`, `apps/backend/runtime/families/sd/fooocus_inpaint.py`, `apps/backend/runtime/families/sd/brushnet.py`, and `apps/backend/runtime/pipeline_stages/hires_fix.py` | Prepare generic masked bundles/image conditioning/hires latents, while `fooocus_inpaint.py` and `brushnet.py` own the request-scoped SDXL exact-engine patch sessions before masked sampling. | API result packaging |
+| Shared stage helpers | `apps/backend/runtime/pipeline_stages/masked_img2img.py`, `apps/backend/runtime/pipeline_stages/sampling_execute.py`, `apps/backend/runtime/families/sd/fooocus_inpaint.py`, `apps/backend/runtime/families/sd/brushnet.py`, and `apps/backend/runtime/pipeline_stages/hires_fix.py` | Prepare generic masked bundles/image conditioning/hires latents, then let `sampling_execute.py` activate the post-LoRA sampling snapshot and enter the request-scoped SDXL Fooocus/BrushNet patch sessions before the sampler/IP-Adapter pass. | API result packaging |
 | Terminal surfaces | `apps/backend/interfaces/api/tasks/generation_tasks.py` and `apps/backend/interfaces/api/routers/tasks.py` | Store the encoded result payload and expose terminal snapshot/SSE state. | end |
 
 Branch notes:
 - Classic base img2img resolves SD-vs-flow dispatch locally in `apps/backend/use_cases/img2img.py` before masked/unmasked prep.
 - SDXL SUPIR mode stays inside the canonical img2img owner: route preflight lives in `apps/backend/interfaces/api/routers/generation.py`, while the request-scoped restore runtime lives in `apps/backend/runtime/families/supir/runtime.py`.
-- SDXL exact-engine inpaint stays inside the canonical img2img owner: exact-engine mode/asset preflight lives in `apps/backend/interfaces/api/routers/generation.py`, while the request-scoped patch sessions live in `apps/backend/runtime/families/sd/fooocus_inpaint.py` and `apps/backend/runtime/families/sd/brushnet.py`.
+- SDXL exact-engine inpaint stays inside the canonical img2img owner: exact-engine mode/asset preflight lives in `apps/backend/interfaces/api/routers/generation.py`, `img2img.py` installs the temporary request-scoped sampling-session factory only for non-SUPIR exact modes, and `sampling_execute.py` enters the Fooocus/BrushNet session after canonical LoRA activation.
 - Kontext-specific img2img work stays local to `apps/backend/use_cases/img2img.py`.
 - FLUX.2 keeps its own engine-side img2img seam at `apps/backend/engines/flux2/img2img.py`; the public route still enters through the same router/task/orchestrator chain.
 

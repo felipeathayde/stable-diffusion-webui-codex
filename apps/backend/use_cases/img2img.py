@@ -9,7 +9,7 @@ Required Notice: see NOTICE
 Purpose: Image-to-image use case orchestration and canonical streaming wrapper (init image + optional hires pass).
 Builds prompt/sampling plans from `CodexProcessingImg2Img`, prepares init-image bundles/latents, dispatches classic img2img conditioning by family, runs the sampler loop, optionally routes SDXL img2img/inpaint through native SUPIR mode, and optionally performs a hires second pass with family-specific continuation semantics.
 Masked img2img (“inpaint”) uses Forge/A1111 “Only masked” semantics and supports optional ADetailer-style multi-region passes for disconnected masks.
-Exact-engine SDXL `fooocus_inpaint` and `brushnet` now stay on request-scoped family helper seams while the shared masked stage remains generic-only.
+Exact-engine SDXL `fooocus_inpaint` and `brushnet` stay on request-scoped family helper seams while the shared masked stage remains generic-only; the canonical sampling stage now enters those exact-engine sessions after LoRA activation instead of mutating only the pre-sampling active snapshot.
 The hires pass init is prepared via the global family-dispatched hires-fix stage (`apps/backend/runtime/pipeline_stages/hires_fix.py`).
 When configured, the hires second pass parses LoRA tags from the hires prompt/negative prompt pair, inherits base/request LoRAs when the hires
 prompt omits them, and resolves explicit hires request overrides by deriving a dedicated `SamplingPlan` for the hires pass.
@@ -21,6 +21,10 @@ Base img2img/inpaint now use the shared proportional denoise-step contract, whil
 Symbols (top-level; keep in sync; no ghosts):
 - `_resolve_img2img_variant` (function): Decide which img2img variant to run (classic vs Flux Kontext).
 - `_resolve_classic_img2img_backend` (function): Decide whether classic img2img uses SD-style image conditioning or flow-family zero-conditioning fallback.
+- `_resolve_requested_exact_inpaint_mode` (function): Classify whether the current request asks for an exact SDXL inpaint runtime.
+- `_validate_exact_inpaint_runtime_state` (function): Fail loud when exact SDXL inpaint reaches runtime without its required masked bundle or alongside SUPIR.
+- `_resolve_inpaint_sampling_session_factory` (function): Resolve the optional request-scoped exact-inpaint sampling session factory for the active masked bundle.
+- `_install_inpaint_sampling_session_factory` (function): Install/remove the exact-inpaint sampling session factory around non-SUPIR sampling callsites.
 - `_resolve_hires_target_dimensions` (function): Resolve the truthful hires target size for the active engine, including zimage `%16` snapping.
 - `_conditioning_cache_hit_metadata` (function): Build standardized `GenerationResult.metadata` cache-hit payload for img2img wrappers.
 - `_smart_cache_buckets_for_engine` (function): Resolve Smart Cache metric buckets used by each engine family.
@@ -44,7 +48,7 @@ import contextlib
 import math
 import threading
 from dataclasses import replace
-from typing import Any, Iterator, Mapping, Sequence
+from typing import Any, Callable, Iterator, Mapping, Sequence
 
 import logging
 import torch
@@ -116,6 +120,7 @@ _CLASSIC_FLOW_MASKED_IMG2IMG_ENGINES = {"zimage"}
 _GENERIC_POST_SAMPLE_BLEND_INPAINT_MODE = "post_sample_blend"
 _FOOOCUS_INPAINT_MODE = "fooocus_inpaint"
 _BRUSHNET_INPAINT_MODE = "brushnet"
+_EXACT_INPAINT_SAMPLING_SESSION_FACTORY_ATTR = "_codex_exact_inpaint_sampling_session_factory"
 
 # Recommended resolutions from upstream diffusers FluxKontextPipeline.
 _PREFERRED_KONTEXT_RESOLUTIONS: list[tuple[int, int]] = [
@@ -167,15 +172,65 @@ def _resolve_shared_inpaint_mode(requested_mode: str | None) -> str:
     return normalized
 
 
-def _inpaint_sampling_session(*, processing: CodexProcessingImg2Img, masked_bundle) -> contextlib.AbstractContextManager[object]:
-    if masked_bundle is None:
-        return contextlib.nullcontext()
+def _resolve_requested_exact_inpaint_mode(processing: CodexProcessingImg2Img) -> str | None:
     requested_mode = str(getattr(processing, "inpaint_mode", "") or "").strip()
+    if requested_mode in {_FOOOCUS_INPAINT_MODE, _BRUSHNET_INPAINT_MODE}:
+        return requested_mode
+    return None
+
+
+def _validate_exact_inpaint_runtime_state(
+    *,
+    processing: CodexProcessingImg2Img,
+    masked_bundle,
+) -> str | None:
+    requested_mode = _resolve_requested_exact_inpaint_mode(processing)
+    if requested_mode is None:
+        return None
+    if masked_bundle is None:
+        raise RuntimeError(
+            f"Exact img2img inpaint mode '{requested_mode}' cannot run without a masked img2img bundle."
+        )
+    if getattr(processing, "supir", None) is not None:
+        raise RuntimeError(f"Exact img2img inpaint mode '{requested_mode}' cannot be combined with SUPIR.")
+    return requested_mode
+
+
+def _resolve_inpaint_sampling_session_factory(
+    *,
+    processing: CodexProcessingImg2Img,
+    masked_bundle,
+) -> Callable[[], contextlib.AbstractContextManager[object]] | None:
+    requested_mode = _validate_exact_inpaint_runtime_state(processing=processing, masked_bundle=masked_bundle)
+    if requested_mode is None:
+        return None
     if requested_mode == _FOOOCUS_INPAINT_MODE:
-        return apply_fooocus_inpaint_for_sampling(processing=processing, masked_bundle=masked_bundle)
+        return lambda: apply_fooocus_inpaint_for_sampling(processing=processing, masked_bundle=masked_bundle)
     if requested_mode == _BRUSHNET_INPAINT_MODE:
-        return apply_brushnet_for_sampling(processing=processing, masked_bundle=masked_bundle)
-    return contextlib.nullcontext()
+        return lambda: apply_brushnet_for_sampling(processing=processing, masked_bundle=masked_bundle)
+    return None
+
+
+@contextlib.contextmanager
+def _install_inpaint_sampling_session_factory(
+    *,
+    processing: CodexProcessingImg2Img,
+    masked_bundle,
+) -> Iterator[None]:
+    session_factory = _resolve_inpaint_sampling_session_factory(processing=processing, masked_bundle=masked_bundle)
+    if session_factory is None:
+        yield
+        return
+    if hasattr(processing, _EXACT_INPAINT_SAMPLING_SESSION_FACTORY_ATTR):
+        raise RuntimeError(
+            f"CodexProcessingImg2Img already owns {_EXACT_INPAINT_SAMPLING_SESSION_FACTORY_ATTR}; "
+            "exact inpaint session ownership must stay single-owner."
+        )
+    setattr(processing, _EXACT_INPAINT_SAMPLING_SESSION_FACTORY_ATTR, session_factory)
+    try:
+        yield
+    finally:
+        delattr(processing, _EXACT_INPAINT_SAMPLING_SESSION_FACTORY_ATTR)
 
 
 def _resolve_hires_target_dimensions(
@@ -992,25 +1047,29 @@ def generate_img2img(
                     pass_rng = ensure_sampler_and_rng(processing, plan)
                     noise = pass_rng.next().to(init_latent)
                     denoise_strength = float(getattr(processing, "denoising_strength", 0.5) or 0.5)
+                    _validate_exact_inpaint_runtime_state(processing=processing, masked_bundle=masked_bundle)
 
                     runtime_result = None
-                    with _inpaint_sampling_session(processing=processing, masked_bundle=masked_bundle):
-                        if processing.supir is not None:
-                            runtime_result = run_supir_img2img(
-                                processing,
-                                plan=plan,
-                                payload=payload,
-                                prompt_context=prompt_context,
-                                rng=pass_rng,
-                                noise=noise,
-                                source_tensor=source_tensor,
-                                pre_denoiser_hook=pre_denoiser_hook,
-                                post_denoiser_hook=post_denoiser_hook,
-                                post_step_hook=post_step_hook,
-                                post_sample_hook=post_sample_hook,
-                            )
-                            samples = runtime_result.samples
-                        else:
+                    if processing.supir is not None:
+                        runtime_result = run_supir_img2img(
+                            processing,
+                            plan=plan,
+                            payload=payload,
+                            prompt_context=prompt_context,
+                            rng=pass_rng,
+                            noise=noise,
+                            source_tensor=source_tensor,
+                            pre_denoiser_hook=pre_denoiser_hook,
+                            post_denoiser_hook=post_denoiser_hook,
+                            post_step_hook=post_step_hook,
+                            post_sample_hook=post_sample_hook,
+                        )
+                        samples = runtime_result.samples
+                    else:
+                        with _install_inpaint_sampling_session_factory(
+                            processing=processing,
+                            masked_bundle=masked_bundle,
+                        ):
                             samples = execute_sampling(
                                 processing,
                                 plan,
@@ -1123,24 +1182,30 @@ def generate_img2img(
     start_step = 0
     denoise_strength = denoise_value
 
+    exact_masked_bundle = masked_bundle if processing.has_mask() else None
+    _validate_exact_inpaint_runtime_state(processing=processing, masked_bundle=exact_masked_bundle)
+
     runtime_result = None
-    with _inpaint_sampling_session(processing=processing, masked_bundle=masked_bundle if processing.has_mask() else None):
-        if processing.supir is not None:
-            runtime_result = run_supir_img2img(
-                processing,
-                plan=plan,
-                payload=payload,
-                prompt_context=prompt_context,
-                rng=rng,
-                noise=noise,
-                source_tensor=source_tensor,
-                pre_denoiser_hook=pre_denoiser_hook,
-                post_denoiser_hook=post_denoiser_hook,
-                post_step_hook=post_step_hook,
-                post_sample_hook=post_sample_hook,
-            )
-            samples = runtime_result.samples
-        else:
+    if processing.supir is not None:
+        runtime_result = run_supir_img2img(
+            processing,
+            plan=plan,
+            payload=payload,
+            prompt_context=prompt_context,
+            rng=rng,
+            noise=noise,
+            source_tensor=source_tensor,
+            pre_denoiser_hook=pre_denoiser_hook,
+            post_denoiser_hook=post_denoiser_hook,
+            post_step_hook=post_step_hook,
+            post_sample_hook=post_sample_hook,
+        )
+        samples = runtime_result.samples
+    else:
+        with _install_inpaint_sampling_session_factory(
+            processing=processing,
+            masked_bundle=exact_masked_bundle,
+        ):
             samples = execute_sampling(
                 processing,
                 plan,

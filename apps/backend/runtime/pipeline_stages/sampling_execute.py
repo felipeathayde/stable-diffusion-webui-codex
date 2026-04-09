@@ -9,8 +9,8 @@ Required Notice: see NOTICE
 Purpose: Sampling execution helper for pipeline orchestrators.
 Runs the sampler loop, integrates preview callbacks, applies LoRAs, and triggers post-sample hooks and diagnostics (including ER-SDE option
 propagation into the sampler and diagnostic metadata dumps), with explicit control over txt2img image-conditioning fallback injection, exact
-same-latent boundary-state capture/resume for top-level swap-model continuations, and the internal img2img fixed-step execution seam used by
-hires continuations.
+same-latent boundary-state capture/resume for top-level swap-model continuations, the internal img2img fixed-step execution seam used by
+hires continuations, and optional request-scoped denoiser sessions entered only after canonical LoRA activation.
 Also wraps the active sampling pass with the shared IP-Adapter stage when `processing.ip_adapter` is configured.
 
 Symbols (top-level; keep in sync; no ghosts):
@@ -21,6 +21,7 @@ Symbols (top-level; keep in sync; no ghosts):
 
 from __future__ import annotations
 
+import contextlib
 import datetime as _dt
 import math
 import os
@@ -186,126 +187,144 @@ def execute_sampling_result(
             "`codex_objects_after_applying_lora`."
         )
 
-    with apply_processing_ip_adapter(processing):
-        if processing.scripts is not None:
-            processing.scripts.process_before_every_sampling(
-                processing,
-                x=noise,
-                noise=noise,
-                c=payload.conditioning,
-                uc=payload.unconditional,
+    sampling_session_factory_attr = "_codex_exact_inpaint_sampling_session_factory"
+    sampling_session_factory = getattr(processing, sampling_session_factory_attr, None)
+    if sampling_session_factory is None:
+        sampling_session = contextlib.nullcontext()
+    else:
+        if not callable(sampling_session_factory):
+            raise TypeError(
+                f"{sampling_session_factory_attr} must be a callable returning a context manager; "
+                f"got {type(sampling_session_factory).__name__}."
+            )
+        sampling_session = sampling_session_factory()
+        if not hasattr(sampling_session, "__enter__") or not hasattr(sampling_session, "__exit__"):
+            raise TypeError(
+                f"{sampling_session_factory_attr} must return a context manager; "
+                f"got {type(sampling_session).__name__}."
             )
 
-        if exact_resume_active:
-            if getattr(processing, "modified_noise", None) is not None:
+    with sampling_session:
+        with apply_processing_ip_adapter(processing):
+            if processing.scripts is not None:
+                processing.scripts.process_before_every_sampling(
+                    processing,
+                    x=noise,
+                    noise=noise,
+                    c=payload.conditioning,
+                    uc=payload.unconditional,
+                )
+
+            if exact_resume_active:
+                if getattr(processing, "modified_noise", None) is not None:
+                    processing.modified_noise = None
+                    raise RuntimeError(
+                        "Exact boundary resume rejects `processing.modified_noise`; initial-noise overrides are unsupported."
+                    )
+                if exact_resume_noise_baseline is not None and not torch.equal(noise, exact_resume_noise_baseline):
+                    raise RuntimeError(
+                        "Exact boundary resume rejects in-place initial-noise mutation during sampling hooks/scripts."
+                    )
+            elif getattr(processing, "modified_noise", None) is not None:
+                noise = processing.modified_noise
                 processing.modified_noise = None
-                raise RuntimeError(
-                    "Exact boundary resume rejects `processing.modified_noise`; initial-noise overrides are unsupported."
-                )
-            if exact_resume_noise_baseline is not None and not torch.equal(noise, exact_resume_noise_baseline):
-                raise RuntimeError(
-                    "Exact boundary resume rejects in-place initial-noise mutation during sampling hooks/scripts."
-                )
-        elif getattr(processing, "modified_noise", None) is not None:
-            noise = processing.modified_noise
-            processing.modified_noise = None
 
-        preview_method = live_preview_method(default=LivePreviewMethod.FULL)
-        preview_interval = int(preview_interval_steps(default=0))
-        debug_factors = debug_preview_factors_enabled()
-        preview_emitted = False
-        progress_owner_token = str(getattr(processing, "_codex_progress_owner_token", "") or "")
+            preview_method = live_preview_method(default=LivePreviewMethod.FULL)
+            preview_interval = int(preview_interval_steps(default=0))
+            debug_factors = debug_preview_factors_enabled()
+            preview_emitted = False
+            progress_owner_token = str(getattr(processing, "_codex_progress_owner_token", "") or "")
 
-        def _preview_cb(denoised_latent: torch.Tensor, step: int, total: int | None) -> None:
-            nonlocal preview_emitted
-            if preview_interval <= 0:
-                return
-            # Skip preview decode on the final step only when at least one preview
-            # was already emitted; this preserves low-overhead long runs while still
-            # allowing short runs to emit one terminal preview.
-            try:
-                if total is not None and int(total) > 0 and int(step) >= int(total) and preview_emitted:
-                    if debug_factors:
-                        maybe_log_preview_factors(processing, denoised_latent, step=int(step), total=int(total))
+            def _preview_cb(denoised_latent: torch.Tensor, step: int, total: int | None) -> None:
+                nonlocal preview_emitted
+                if preview_interval <= 0:
                     return
-            except Exception:
-                # If step/total are malformed, fall back to best-effort preview.
-                pass
-            preview = decode_preview_image(processing, denoised_latent, method=preview_method)
-            if preview is None:
-                return
-            backend_state.set_current_image(
-                preview,
-                sampling_step=int(step),
-                owner_token=progress_owner_token,
-            )
-            preview_emitted = True
-            if debug_factors:
-                maybe_log_preview_factors(processing, denoised_latent, step=int(step), total=int(total or 0))
+                # Skip preview decode on the final step only when at least one preview
+                # was already emitted; this preserves low-overhead long runs while still
+                # allowing short runs to emit one terminal preview.
+                try:
+                    if total is not None and int(total) > 0 and int(step) >= int(total) and preview_emitted:
+                        if debug_factors:
+                            maybe_log_preview_factors(processing, denoised_latent, step=int(step), total=int(total))
+                        return
+                except Exception:
+                    # If step/total are malformed, fall back to best-effort preview.
+                    pass
+                preview = decode_preview_image(processing, denoised_latent, method=preview_method)
+                if preview is None:
+                    return
+                backend_state.set_current_image(
+                    preview,
+                    sampling_step=int(step),
+                    owner_token=progress_owner_token,
+                )
+                preview_emitted = True
+                if debug_factors:
+                    maybe_log_preview_factors(processing, denoised_latent, step=int(step), total=int(total or 0))
 
-        if image_conditioning is None and allow_txt2img_conditioning_fallback:
-            image_conditioning = txt2img_conditioning(
+            if image_conditioning is None and allow_txt2img_conditioning_fallback:
+                image_conditioning = txt2img_conditioning(
+                    processing.sd_model,
+                    noise,
+                    processing.width,
+                    processing.height,
+                )
+
+            if denoise_strength is not None and math.isclose(float(denoise_strength), 0.0):
+                if capture_boundary_state_at_step is not None or resume_boundary_state is not None:
+                    raise RuntimeError("Exact boundary capture/resume is invalid when denoise_strength resolves to 0.0.")
+                samples = init_latent if init_latent is not None else torch.zeros_like(noise)
+                if post_sample_hook is not None:
+                    samples = post_sample_hook(samples)
+                samples = run_post_sample_hooks(processing, samples)
+                _maybe_dump_latents(samples, processing, plan, prompt_context)
+                devices.torch_gc()
+                return SamplingResult(samples=samples)
+
+            sampler_name = plan.sampler_name
+            scheduler_name = plan.scheduler_name
+            context = build_sampling_context(
                 processing.sd_model,
-                noise,
-                processing.width,
-                processing.height,
+                sampler_name=sampler_name,
+                scheduler_name=scheduler_name,
+                steps=int(plan.steps),
+                noise_source=plan.noise_settings.source.value,
+                eta_noise_seed_delta=plan.noise_settings.eta_noise_seed_delta,
+                height=int(getattr(processing, "height", 0) or 0) or None,
+                width=int(getattr(processing, "width", 0) or 0) or None,
+                device=noise.device,
+                dtype=noise.dtype,
             )
 
-        if denoise_strength is not None and math.isclose(float(denoise_strength), 0.0):
-            if capture_boundary_state_at_step is not None or resume_boundary_state is not None:
-                raise RuntimeError("Exact boundary capture/resume is invalid when denoise_strength resolves to 0.0.")
-            samples = init_latent if init_latent is not None else torch.zeros_like(noise)
-            if post_sample_hook is not None:
-                samples = post_sample_hook(samples)
-            samples = run_post_sample_hooks(processing, samples)
+            result = processing.sampler.sample_result(
+                processing,
+                noise,
+                payload.conditioning,
+                payload.unconditional,
+                image_conditioning=image_conditioning,
+                init_latent=init_latent,
+                resume_boundary_state=resume_boundary_state,
+                capture_boundary_state_at_step=capture_boundary_state_at_step,
+                start_at_step=start_at_step,
+                denoise_strength=denoise_strength,
+                img2img_fix_steps=img2img_fix_steps,
+                pre_denoiser_hook=pre_denoiser_hook,
+                post_denoiser_hook=post_denoiser_hook,
+                preview_callback=_preview_cb,
+                post_step_hook=post_step_hook,
+                post_sample_hook=post_sample_hook,
+                context=context,
+                er_sde_options=plan.er_sde,
+            )
+
+            if result.boundary_state is not None:
+                devices.torch_gc()
+                return result
+
+            samples = run_post_sample_hooks(processing, result.samples)
             _maybe_dump_latents(samples, processing, plan, prompt_context)
             devices.torch_gc()
             return SamplingResult(samples=samples)
-
-        sampler_name = plan.sampler_name
-        scheduler_name = plan.scheduler_name
-        context = build_sampling_context(
-            processing.sd_model,
-            sampler_name=sampler_name,
-            scheduler_name=scheduler_name,
-            steps=int(plan.steps),
-            noise_source=plan.noise_settings.source.value,
-            eta_noise_seed_delta=plan.noise_settings.eta_noise_seed_delta,
-            height=int(getattr(processing, "height", 0) or 0) or None,
-            width=int(getattr(processing, "width", 0) or 0) or None,
-            device=noise.device,
-            dtype=noise.dtype,
-        )
-
-        result = processing.sampler.sample_result(
-            processing,
-            noise,
-            payload.conditioning,
-            payload.unconditional,
-            image_conditioning=image_conditioning,
-            init_latent=init_latent,
-            resume_boundary_state=resume_boundary_state,
-            capture_boundary_state_at_step=capture_boundary_state_at_step,
-            start_at_step=start_at_step,
-            denoise_strength=denoise_strength,
-            img2img_fix_steps=img2img_fix_steps,
-            pre_denoiser_hook=pre_denoiser_hook,
-            post_denoiser_hook=post_denoiser_hook,
-            preview_callback=_preview_cb,
-            post_step_hook=post_step_hook,
-            post_sample_hook=post_sample_hook,
-            context=context,
-            er_sde_options=plan.er_sde,
-        )
-
-        if result.boundary_state is not None:
-            devices.torch_gc()
-            return result
-
-        samples = run_post_sample_hooks(processing, result.samples)
-        _maybe_dump_latents(samples, processing, plan, prompt_context)
-        devices.torch_gc()
-        return SamplingResult(samples=samples)
 
 
 def execute_sampling(

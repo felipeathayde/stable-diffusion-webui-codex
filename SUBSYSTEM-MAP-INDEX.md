@@ -1,7 +1,7 @@
 <!-- tags: webui, architecture, map, index, discovery -->
 # Subsystem Map Index
-Date: 2026-04-06
-Last Review: 2026-04-06
+Date: 2026-04-08
+Last Review: 2026-04-08
 Status: Active
 
 Read this first. This file is lookup-only.
@@ -25,7 +25,7 @@ Use `Jump to` to open the bounded section in `SUBSYSTEM-MAP.md`, then follow the
 | Type | Name | Aliases | Jump to | Canonical owner path |
 | --- | --- | --- | --- | --- |
 | Pipeline | txt2img | text-to-image; image gen | [txt2img](SUBSYSTEM-MAP.md#map-pipeline-txt2img) | `apps/backend/use_cases/txt2img.py` |
-| Pipeline | img2img | image-to-image; inpaint; hires continuation; SUPIR mode; exact-engine inpaint modes; Fooocus/BrushNet SDXL branches | [img2img](SUBSYSTEM-MAP.md#map-pipeline-img2img) | `apps/backend/use_cases/img2img.py` |
+| Pipeline | img2img | image-to-image; inpaint; hires continuation; SUPIR mode; exact-engine inpaint modes; post-LoRA Fooocus/BrushNet SDXL sessions | [img2img](SUBSYSTEM-MAP.md#map-pipeline-img2img) | `apps/backend/use_cases/img2img.py` |
 | Pipeline | image_automation | infinite generate; repeat loop; batch method | [image_automation](SUBSYSTEM-MAP.md#map-pipeline-image-automation) | `apps/backend/use_cases/image_automation.py` |
 | Pipeline | txt2vid | text-to-video | [txt2vid](SUBSYSTEM-MAP.md#map-pipeline-txt2vid) | `apps/backend/use_cases/txt2vid.py` |
 | Pipeline | img2vid | image-to-video | [img2vid](SUBSYSTEM-MAP.md#map-pipeline-img2vid) | `apps/backend/use_cases/img2vid.py` |

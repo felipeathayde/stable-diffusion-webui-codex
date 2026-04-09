@@ -1,6 +1,6 @@
 # apps/backend/runtime/pipeline_stages Overview
 Date: 2025-10-30
-Last Review: 2026-03-31
+Last Review: 2026-04-08
 Status: Active
 
 ## Purpose
@@ -48,6 +48,7 @@ Status: Active
 - 2026-03-01: `video.py` now exposes `prepare_base_snapshot_video_options(...)` so WAN video use-cases can persist a pre-post-process base video (`*_base` filename prefix) whenever `save_output=true` and upscaling/interpolation is enabled.
 - 2026-02-01: Added `hires_fix.py` to centralize hires pass prep and fix `denoise` semantics (no more inverted `start_at_step` mapping).
 - 2026-02-08: Sampling stages now carry typed ER-SDE options (`SamplingPlan.er_sde`) from plan build to execution; `execute_sampling(...)` forwards options into `CodexSampler.sample(...)` and latent diagnostics include effective ER-SDE metadata when sampler is `er sde`.
+- 2026-04-08: `sampling_execute.py` now also consumes request-owned `_codex_exact_inpaint_sampling_session_factory` after canonical `codex_objects_after_applying_lora` activation and before the shared IP-Adapter stage, so exact SDXL inpaint sessions patch the real live sampling denoiser instead of the pre-LoRA active snapshot.
 - 2026-02-09: `sampling_execute` now gates LoRA apply/reset on `codex_objects_after_applying_lora` capability and fails loud only when LoRA selections are present without engine support, while still resetting stale LoRA state for no-selection runs.
 - 2026-02-25: `sampling_execute.py` now forwards denoiser-adjacent hook callbacks (`pre_denoiser_hook`, `post_denoiser_hook`) into `CodexSampler.sample(...)`; `masked_img2img.py::LatentMaskEnforcer` now exposes Forge-style pre/post denoiser blend hooks (noisy outside-mask preblend + init-latent outside-mask postblend), while retaining post-sample clamp behavior.
 - 2026-04-06: `masked_img2img.py` is generic-only for masked runtime enforcement. It owns `per_step_blend` and `post_sample_blend` plus shared mask/crop/paste-back prep, while SDXL-specific branches like Fooocus must stay in `img2img.py` + `runtime/families/sd/**` instead of widening this shared stage.

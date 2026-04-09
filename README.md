@@ -211,10 +211,112 @@ Default model roots are under `models/`:
 More model hub and folder layout details: [README_HF_MODELS.md](README_HF_MODELS.md).
 If you customize model roots, edit [apps/paths.json](apps/paths.json).
 
-## Support
+## Development and Repository Management
 
-- Bug reports: https://github.com/sangoi-exe/stable-diffusion-webui-codex/issues
-- Questions and discussion: https://github.com/sangoi-exe/stable-diffusion-webui-codex/discussions
+This repository is a fork of the original [sangoi-exe/stable-diffusion-webui-codex](https://github.com/sangoi-exe/stable-diffusion-webui-codex). The following guide explains how to manage your fork and stay updated with upstream changes.
+
+### Repository Structure
+
+- **origin**: Your fork on GitHub (`https://github.com/felipeathayde/stable-diffusion-webui-codex`)
+- **upstream**: The original repository (`https://github.com/sangoi-exe/stable-diffusion-webui-codex`)
+
+### Updating from Upstream
+
+To pull the latest changes from the original repository:
+
+```bash
+# Fetch latest changes from upstream
+git fetch upstream
+
+# Switch to main/master branch
+git checkout master
+
+# Merge upstream changes
+git merge upstream/master
+
+# Push updates to your fork
+git push origin master
+```
+
+### Creating Feature Branches
+
+When working on new features or fixes:
+
+```bash
+# Create and switch to a new branch
+git checkout -b feature/my-new-feature
+
+# Make your changes, then commit
+git add .
+git commit -m "Add my new feature"
+
+# Push the branch to your fork
+git push origin feature/my-new-feature
+
+# Create a Pull Request on GitHub to merge into your main branch or upstream
+```
+
+### Syncing with Upstream Regularly
+
+It's recommended to sync with upstream regularly to avoid merge conflicts:
+
+```bash
+# Check current status
+git status
+
+# If working directory is clean, fetch and merge
+git fetch upstream
+git merge upstream/master
+git push origin master
+```
+
+### Handling Merge Conflicts
+
+If you encounter merge conflicts during `git merge upstream/master`:
+
+1. Edit the conflicting files to resolve conflicts
+2. Stage the resolved files: `git add <file>`
+3. Complete the merge: `git commit`
+4. Push: `git push origin master`
+
+### Contributing Back to Upstream
+
+If you want to contribute your changes back to the original repository:
+
+1. Ensure your changes are on a feature branch
+2. Push the branch to your fork
+3. Create a Pull Request from your fork's branch to the upstream repository
+
+### Local Development Setup
+
+For development work:
+
+```bash
+# Clone your fork (if not already done)
+git clone https://github.com/felipeathayde/stable-diffusion-webui-codex.git
+cd stable-diffusion-webui-codex
+
+# Set up upstream remote
+git remote add upstream https://github.com/sangoi-exe/stable-diffusion-webui-codex.git
+
+# Install dependencies (see INSTALL.md for details)
+# ... follow installation instructions
+```
+
+### Branch Strategy
+
+- `master`: Main development branch (tracks upstream)
+- `dev`: Development branch with latest features (if available)
+- Feature branches: `feature/*` for new features
+- Bugfix branches: `fix/*` for bug fixes
+
+### Best Practices
+
+- Always work on feature branches, not directly on `master`
+- Keep your fork synced with upstream regularly
+- Test your changes before pushing
+- Use descriptive commit messages
+- Create Pull Requests for significant changes
 
 ## License (noncommercial)
 
